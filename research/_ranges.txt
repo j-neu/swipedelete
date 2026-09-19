@@ -1,0 +1,8 @@
+
+=== RANGE 0-39999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 40000-79999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 80000-119999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 120000-159999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 160000-199999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 200000-239999 FAIL The SSL connection could not be established, see inner exception.
+=== RANGE 240000-279999 FAIL The SSL connection could not be established, see inner exception.
