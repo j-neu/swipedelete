@@ -4,8 +4,8 @@
     <string name="permission_rationale_photo_video">Grant photo and video access to include your whole library.</string>
     <string name="permission_rationale_all_files_access">Grant All files access to manage non-media files outside your folders.</string>
 
-    <!-- Narrowed-panel copy: what the feature excludes, then the in-context grant. -->
-    <string name="feature_narrow_reason_scope_folders">Narrower here: only the folders you granted are included.</string>
+    <!-- Narrowed-panel copy: what the feature excludes, then the in-context grant.
+         Only features that can actually narrow (fullAtTier > TIER_0) reference these. -->
     <string name="feature_narrow_affordance_all_files">Grant All files access to include everything</string>
     <string name="feature_narrow_reason_media_library">Narrower here: only files inside your granted folders are included.</string>
     <string name="feature_narrow_affordance_photo_video">Grant photo and video access to include the whole library</string>

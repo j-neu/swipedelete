@@ -36,9 +36,10 @@ class AndroidCapabilityController(
     override fun tier(): Flow<Tier> = flow { emit(currentTier()) }
 
     override suspend fun requestPhotoVideo(): TierResult {
-        if (hasMediaRead()) return TierResult.Granted
+        val missing = missingMediaCapabilityPermissions()
+        if (missing.isEmpty()) return TierResult.Granted
         val requester = requestMediaPermissions
-        if (requester != null && requester(mediaReadPermissions())) return TierResult.Granted
+        if (requester != null && requester(missing)) return TierResult.Granted
         return TierResult.Declined(R.string.permission_rationale_photo_video)
     }
 
@@ -58,8 +59,29 @@ class AndroidCapabilityController(
 
     private fun hasAllFilesAccess(): Boolean = buildHasAllFilesAccess && allFilesAccessGranted()
 
-    private fun hasMediaRead(): Boolean =
-        mediaReadPermissions().any { context.checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+    /**
+     * Tier-1 read capability. Deliberate partial-grant semantics: on API 33+ this
+     * requires **both** READ_MEDIA_IMAGES and READ_MEDIA_VIDEO, so an images-only
+     * grant can never make a video deck report FULL. On API 26-32 a single read
+     * permission is the whole read capability.
+     */
+    private fun hasMediaRead(): Boolean = mediaReadPermissions().all(::isGranted)
+
+    /**
+     * The full capability the photo/video flow needs. On API 26-28 that includes
+     * WRITE_EXTERNAL_STORAGE: without it the legacy band has no consent flow and a
+     * MediaStore media quarantine cannot complete (V4), so declaring the
+     * permission is not enough — it must actually be requested and granted.
+     */
+    private fun mediaCapabilityPermissions(): Array<String> =
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            mediaReadPermissions()
+        }
+
+    private fun missingMediaCapabilityPermissions(): Array<String> =
+        mediaCapabilityPermissions().filterNot(::isGranted).toTypedArray()
 
     private fun mediaReadPermissions(): Array<String> =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -67,6 +89,9 @@ class AndroidCapabilityController(
         } else {
             arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
         }
+
+    private fun isGranted(permission: String): Boolean =
+        context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 }
 
 private fun systemAllFilesAccessGranted(): Boolean =

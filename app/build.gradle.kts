@@ -22,7 +22,6 @@ android {
         versionCode = 1
         versionName = "0.1.0"
 
-        manifestPlaceholders["noAllFilesAccess"] = "false"
         buildConfigField("boolean", "ALL_FILES_ACCESS", if (noAllFilesAccess) "false" else "true")
     }
 

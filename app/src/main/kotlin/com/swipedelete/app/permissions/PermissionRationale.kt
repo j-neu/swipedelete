@@ -32,82 +32,96 @@ sealed interface Availability {
  * may be in that set (SPEC 4.2 condition 3): [Viewer], [DeckTriage] and
  * [SlotMove] are deliberately false and full at tier 0.
  *
- * [fullAtTier] is the lowest tier at which the feature is not narrowed. It is
- * also the tier that the narrowed panel's grant affordance pushes the user to.
+ * [fullAtTier] is the lowest tier at which the feature is not narrowed, and the
+ * tier the narrowed panel's grant affordance pushes the user to. A feature with
+ * `fullAtTier == Tier.TIER_0` can never narrow, so [reasonRes] and
+ * [grantAffordanceRes] are **null** for it; only features that can actually be
+ * narrowed carry copy, which keeps an All Files Access affordance off
+ * triage/viewing panels by construction.
  */
 enum class Feature(
     val requiresAllFilesAccess: Boolean,
     val fullAtTier: Tier,
-    @param:StringRes val reasonRes: Int,
-    @param:StringRes val grantAffordanceRes: Int,
+    @param:StringRes val reasonRes: Int?,
+    @param:StringRes val grantAffordanceRes: Int?,
 ) {
     // Tier 0: full triage inside granted folders, the five slots, viewer,
     // quarantine, journal, dashboard, compression and the granted-tree modules.
+    // These can never narrow, so they carry no grant copy.
     DeckTriage(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
+    ),
+
+    // Tier 1: the whole-library media decks of SPEC 4.4 — screenshots, largest
+    // videos, unreviewed, across all media. Tier 0 keeps granted-folder triage.
+    WholeLibraryDecks(
+        requiresAllFilesAccess = false,
+        fullAtTier = Tier.TIER_1,
+        reasonRes = R.string.feature_narrow_reason_media_library,
+        grantAffordanceRes = R.string.feature_narrow_affordance_photo_video,
     ),
     SlotMove(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     Viewer(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     QuarantineRestore(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     JournalHistoryExport(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     Dashboard(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     AppCacheMeasure(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     Compression(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     Trends(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     LargeFiles(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
     ExactDuplicates(
         requiresAllFilesAccess = false,
         fullAtTier = Tier.TIER_0,
-        reasonRes = R.string.feature_narrow_reason_scope_folders,
-        grantAffordanceRes = R.string.feature_narrow_affordance_all_files,
+        reasonRes = null,
+        grantAffordanceRes = null,
     ),
 
     // Tier 1: whole-library media modules. Narrowed at tier 0 (granted folders only).
@@ -187,7 +201,14 @@ class TieredFeatureGate(private val buildHasAllFilesAccess: Boolean) {
         return if (tier.isAtLeast(feature.fullAtTier)) {
             Availability.FULL
         } else {
-            Availability.NARROWED(feature.reasonRes, feature.grantAffordanceRes)
+            Availability.NARROWED(
+                reasonRes = checkNotNull(feature.reasonRes) {
+                    "${feature.name} can narrow but carries no reasonRes"
+                },
+                grantAffordanceRes = checkNotNull(feature.grantAffordanceRes) {
+                    "${feature.name} can narrow but carries no grantAffordanceRes"
+                },
+            )
         }
     }
 }
