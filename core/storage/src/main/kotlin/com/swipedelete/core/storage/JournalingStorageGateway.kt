@@ -8,6 +8,7 @@ import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.OpKind
+import kotlinx.coroutines.CancellationException
 import java.util.UUID
 
 /**
@@ -15,14 +16,25 @@ import java.util.UUID
  * prior committed journal entry.
  *
  * Every mutating call commits a `PENDING` [JournalEntryEntity] **before** the
- * delegate performs the operation and moves the row to a terminal state
- * (`DONE` on a normal return, `FAILED` when the delegate throws) afterwards. A
- * `FAILED` row records the thrown error message and the exception is rethrown,
- * so the caller still observes the failure.
+ * delegate performs the operation and moves each row to a terminal state
+ * afterwards. The terminal state is derived from the delegate's **result**, not
+ * merely from whether it threw:
+ *
+ * - `quarantine`: `Quarantined` → `DONE`; `Partial` → `DONE` for the itemIds in
+ *   `entries` and `FAILED` (the matching [Failure.reason]) for the itemIds in
+ *   `failures`; `InsufficientSpace` → `FAILED` (`insufficient_space`).
+ * - `deletePermanently`: `Deleted` → `DONE`; `Partial` → `FAILED` for the itemIds
+ *   in `failures`, `DONE` for the rest.
+ * - `move`: `Moved` / `NameCollision` → `DONE`; `Failed` → `FAILED` (the reason).
+ * - `restore`: `Restored` → `DONE`; `Conflict` / `HashMismatch` → `FAILED` with a
+ *   reason naming which one.
+ *
+ * A thrown delegate exception fails every row created for the call and is
+ * rethrown. A [CancellationException] is never treated as a failure: it
+ * propagates untouched so a cancelled scope does not rewrite the journal.
  *
  * A multi-item operation ([quarantine], [deletePermanently]) writes one row per
- * item, in list order, so a batch that aborts with an exception fails every
- * item's row individually and each row names exactly the item it covers.
+ * item, in list order.
  *
  * Read-only calls ([StorageGateway.sources], [StorageGateway.enumerate],
  * [StorageGateway.metadata], [StorageGateway.openStream],
@@ -41,7 +53,7 @@ class JournalingStorageGateway(
 
     override suspend fun move(item: MediaItem, destination: Destination): MoveResult =
         journaled(
-            listOf(
+            entries = listOf(
                 entry(
                     opKind = OpKind.MOVE,
                     batchId = newBatchId(),
@@ -52,26 +64,51 @@ class JournalingStorageGateway(
                     sizeBytes = item.sizeBytes,
                 ),
             ),
-        ) { delegate.move(item, destination) }
+            operation = { delegate.move(item, destination) },
+        ) { result ->
+            listOf(
+                when (result) {
+                    is MoveResult.Moved, is MoveResult.NameCollision -> JournalOutcome.DONE
+                    is MoveResult.Failed -> JournalOutcome.failed(result.reason)
+                },
+            )
+        }
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult =
-        journaled(
-            items.map { item ->
-                entry(
-                    opKind = OpKind.QUARANTINE,
-                    batchId = batch.value,
-                    itemId = item.id.value,
-                    fromUri = item.uri,
-                    toUri = null,
-                    hash = item.hash,
-                    sizeBytes = item.sizeBytes,
-                )
-            },
-        ) { delegate.quarantine(items, batch) }
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+        val rows = items.map { item ->
+            entry(
+                opKind = OpKind.QUARANTINE,
+                batchId = batch.value,
+                itemId = item.id.value,
+                fromUri = item.uri,
+                toUri = null,
+                hash = item.hash,
+                sizeBytes = item.sizeBytes,
+            )
+        }
+        return journaled(rows, operation = { delegate.quarantine(items, batch) }) { result ->
+            when (result) {
+                is QuarantineResult.Quarantined -> rows.map { JournalOutcome.DONE }
+                is QuarantineResult.Partial -> {
+                    val reasons = result.failures.associate { it.itemId.value to it.reason }
+                    val moved = result.entries.mapTo(mutableSetOf()) { it.itemId.value }
+                    rows.map { row ->
+                        when {
+                            reasons.containsKey(row.itemId) -> JournalOutcome.failed(reasons.getValue(row.itemId))
+                            row.itemId in moved -> JournalOutcome.DONE
+                            else -> JournalOutcome.failed("no outcome reported by the delegate")
+                        }
+                    }
+                }
+                is QuarantineResult.InsufficientSpace ->
+                    rows.map { JournalOutcome.failed("insufficient_space") }
+            }
+        }
+    }
 
     override suspend fun restore(entry: JournalEntry): RestoreResult =
         journaled(
-            listOf(
+            entries = listOf(
                 entry(
                     opKind = OpKind.RESTORE,
                     batchId = newBatchId(),
@@ -82,51 +119,103 @@ class JournalingStorageGateway(
                     sizeBytes = entry.sizeBytes,
                 ),
             ),
-        ) { delegate.restore(entry) }
+            operation = { delegate.restore(entry) },
+        ) { result ->
+            listOf(
+                when (result) {
+                    is RestoreResult.Restored -> JournalOutcome.DONE
+                    is RestoreResult.Conflict ->
+                        JournalOutcome.failed("conflict: ${result.originalPath} occupied by ${result.occupiedBy}")
+                    is RestoreResult.HashMismatch ->
+                        JournalOutcome.failed("hash_mismatch: expected ${result.expected}, actual ${result.actual}")
+                },
+            )
+        }
 
     override suspend fun deletePermanently(items: List<MediaItem>): DeleteResult {
         val batchId = newBatchId()
-        return journaled(
-            items.map { item ->
-                entry(
-                    opKind = OpKind.DELETE_PERMANENT,
-                    batchId = batchId,
-                    itemId = item.id.value,
-                    fromUri = item.uri,
-                    toUri = null,
-                    hash = item.hash,
-                    sizeBytes = item.sizeBytes,
-                )
-            },
-        ) { delegate.deletePermanently(items) }
+        val rows = items.map { item ->
+            entry(
+                opKind = OpKind.DELETE_PERMANENT,
+                batchId = batchId,
+                itemId = item.id.value,
+                fromUri = item.uri,
+                toUri = null,
+                hash = item.hash,
+                sizeBytes = item.sizeBytes,
+            )
+        }
+        return journaled(rows, operation = { delegate.deletePermanently(items) }) { result ->
+            when (result) {
+                is DeleteResult.Deleted -> rows.map { JournalOutcome.DONE }
+                is DeleteResult.Partial -> {
+                    val reasons = result.failures.associate { it.itemId.value to it.reason }
+                    rows.map { row ->
+                        val reason = reasons[row.itemId]
+                        if (reason != null) JournalOutcome.failed(reason) else JournalOutcome.DONE
+                    }
+                }
+            }
+        }
     }
 
     /**
-     * Commits every [entries] row as `PENDING`, runs [operation], then writes the
-     * terminal outcome. An exception fails every row for this call (each row
-     * naming its own item) and is rethrown unchanged.
+     * The single write-ahead sequence: insert every [entries] row as `PENDING`,
+     * run [operation], then map its result to one terminal [JournalOutcome] per
+     * row (in the same order) and commit each.
+     *
+     * The insert loop is inside the guarded region: if an insert fails after
+     * earlier rows were committed, those rows are failed before the error is
+     * rethrown, so no row is left `PENDING` by this call.
      */
     private suspend fun <T> journaled(
         entries: List<JournalEntryEntity>,
         operation: suspend () -> T,
+        outcome: (T) -> List<JournalOutcome>,
     ): T {
-        entries.forEach { journal.insertPending(it) }
-        val result = try {
-            operation()
+        val inserted = ArrayList<JournalEntryEntity>(entries.size)
+        val result: T
+        try {
+            entries.forEach { row ->
+                journal.insertPending(row)
+                inserted += row
+            }
+            result = operation()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
         } catch (error: Exception) {
-            mark(entries, JournalState.FAILED, error.message)
+            markAll(inserted, JournalOutcome.failed(error.message))
             throw error
         }
-        mark(entries, JournalState.DONE, null)
+
+        val outcomes = outcome(result)
+        require(outcomes.size == entries.size) {
+            "outcome mapping produced ${outcomes.size} results for ${entries.size} journal rows"
+        }
+        entries.forEachIndexed { index, row -> mark(row, outcomes[index]) }
         return result
     }
 
-    private suspend fun mark(
-        entries: List<JournalEntryEntity>,
-        state: JournalState,
-        error: String?,
-    ) {
-        entries.forEach { journal.markOutcome(it.id, state, error) }
+    private suspend fun markAll(rows: List<JournalEntryEntity>, outcome: JournalOutcome) {
+        rows.forEach { row -> mark(row, outcome) }
+    }
+
+    /**
+     * Marks one row terminal and verifies the DAO actually updated it. A
+     * `markOutcome` that updates zero rows would leave a `PENDING` row behind,
+     * which the reconciler reads as an interrupted operation, so a mismatch is
+     * surfaced loudly rather than swallowed.
+     *
+     * `check` (an `IllegalStateException`) is used because a row count other
+     * than 1 for a primary-key update is a programming/schema error, not an
+     * expected I/O failure.
+     */
+    private suspend fun mark(row: JournalEntryEntity, outcome: JournalOutcome) {
+        val updated = journal.markOutcome(row.id, outcome.state, outcome.error)
+        check(updated == 1) {
+            "journal.markOutcome(${row.id}) updated $updated rows (expected 1): " +
+                "a PENDING row would be left behind and misread as an interrupted operation"
+        }
     }
 
     private fun entry(
@@ -167,6 +256,14 @@ class JournalingStorageGateway(
             ?: destination.source.treeUri
         val name = item.path?.substringAfterLast('/') ?: item.uri.substringAfterLast('/')
         return "$directory/$name"
+    }
+
+    private data class JournalOutcome(val state: JournalState, val error: String?) {
+        companion object {
+            val DONE = JournalOutcome(JournalState.DONE, null)
+
+            fun failed(reason: String?) = JournalOutcome(JournalState.FAILED, reason)
+        }
     }
 
     companion object {
