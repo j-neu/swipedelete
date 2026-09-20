@@ -29,6 +29,8 @@ kotlin {
 
 dependencies {
     api(project(":core:model"))
+    api(project(":core:common"))
+    api(project(":core:database"))
     api(libs.kotlinx.coroutines.core)
 
     testFixturesImplementation(project(":core:model"))
