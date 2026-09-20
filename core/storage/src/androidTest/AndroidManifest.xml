@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          A real DocumentsProvider for the device pass. Declaring it in the
+          androidTest manifest keeps it out of the shipped app while still
+          exercising the genuine DocumentsContract / ContentResolver path.
+        -->
+        <provider
+            android:name="com.swipedelete.core.storage.saf.TestDocumentsProvider"
+            android:authorities="${applicationId}.documents"
+            android:exported="true"
+            android:grantUriPermissions="true">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+    </application>
+
+</manifest>

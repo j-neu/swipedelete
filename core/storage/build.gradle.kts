@@ -10,6 +10,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     compileOptions {
@@ -37,9 +38,20 @@ dependencies {
 
     testFixturesImplementation(project(":core:model"))
     testFixturesImplementation(libs.kotlinx.coroutines.core)
+    // The frozen StorageGatewayContractTest lives in testFixtures so both the
+    // host suite and the instrumented suite can extend it.
+    testFixturesImplementation(libs.kotlin.test.junit)
+    testFixturesImplementation(libs.kotlinx.coroutines.test)
 
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.kotlinx.serialization.json)
     testImplementation(testFixtures(project(":core:storage")))
+
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(testFixtures(project(":core:storage")))
 }

@@ -29,7 +29,7 @@ abstract class StorageGatewayContractTest {
     abstract fun newGateway(items: List<MediaItem> = defaultItems()): StorageGateway
 
     @Test
-    fun `enumerate yields stable ids that metadata can resolve`() = runTest {
+    fun enumerateYieldsStableIdsThatMetadataCanResolve() = runTest {
         val gw = newGateway()
         val page = gw.enumerate(source(), null).first()
         val ids = page.items.map { it.id }
@@ -43,7 +43,7 @@ abstract class StorageGatewayContractTest {
     }
 
     @Test
-    fun `move never overwrites an existing filename`() = runTest {
+    fun moveNeverOverwritesAnExistingFilename() = runTest {
         val gw = newGateway()
         val dst = destinationWith("a.gif")
         val result = gw.move(item(name = "a.gif"), dst)
@@ -53,7 +53,7 @@ abstract class StorageGatewayContractTest {
     }
 
     @Test
-    fun `restore refuses to overwrite and reports Conflict`() = runTest {
+    fun restoreRefusesToOverwriteAndReportsConflict() = runTest {
         val gw = newGateway()
         val original = item(name = "a.gif")
         val quarantined = gw.quarantine(listOf(original), BatchId("b1")) as QuarantineResult.Quarantined
@@ -65,7 +65,7 @@ abstract class StorageGatewayContractTest {
     }
 
     @Test
-    fun `cancelled quarantine leaves the original untouched`() = runTest {
+    fun cancelledQuarantineLeavesTheOriginalUntouched() = runTest {
         val gw = newGateway()
         armCancellation(gw)
         val job = launch { gw.quarantine(listOf(item(name = "a.gif"), item(name = "b.gif")), BatchId("b1")) }
