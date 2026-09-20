@@ -3,6 +3,14 @@ package com.swipedelete.core.common
 import java.io.InputStream
 import java.security.MessageDigest
 
+/**
+ * Computes the SHA-256 digest of a stream.
+ *
+ * Ownership contract: the caller transfers [stream] to the implementation, which
+ * reads it to the end and closes it. Callers must not reuse the stream after the
+ * call; to keep the stream open, pass a non-closing wrapper such as
+ * `CloseShieldInputStream`.
+ */
 interface Hasher {
     suspend fun sha256(stream: InputStream): String
 }
@@ -10,7 +18,8 @@ interface Hasher {
 /**
  * Streams [stream] through [MessageDigest] in [CHUNK_SIZE] chunks and never
  * buffers the whole file, which backs the AC-3 quarantine restore guarantee.
- * The stream is read to the end and closed.
+ * The stream is read to the end and closed (see [Hasher] for the ownership
+ * contract).
  */
 class Sha256Hasher : Hasher {
     override suspend fun sha256(stream: InputStream): String {

@@ -21,9 +21,16 @@ class BytesTest {
     }
 
     @Test
-    fun `formatBytes renders sub-kibibyte values as whole bytes with no decimal`() {
-        assertEquals("512 B", formatBytes(512))
-        assertEquals("1023 B", formatBytes(1023))
+    fun `formatBytes renders every non-zero value with one decimal`() {
+        assertEquals("1.0 B", formatBytes(1))
+        assertEquals("512.0 B", formatBytes(512))
+        assertEquals("1023.0 B", formatBytes(1023))
+    }
+
+    @Test
+    fun `formatBytes promotes a value that rounds to 1024 point 0 to the next unit`() {
+        assertEquals("1.0 MB", formatBytes(1_048_575))
+        assertEquals("1.0 GB", formatBytes(1_073_741_823))
     }
 
     @Test
@@ -37,6 +44,8 @@ class BytesTest {
     fun `reclaimable and freed wording are distinct and never interchangeable`() {
         assertEquals("4.1 GB reclaimable", formatReclaimable(4_400_000_000))
         assertEquals("4.1 GB freed", formatFreed(4_400_000_000))
+        assertEquals("512.0 B reclaimable", formatReclaimable(512))
+        assertEquals("512.0 B freed", formatFreed(512))
         assertEquals("0 B reclaimable", formatReclaimable(0))
         assertEquals("0 B freed", formatFreed(0))
     }
@@ -46,6 +55,7 @@ class BytesTest {
         Locale.setDefault(Locale.GERMANY)
         assertEquals("4.1 GB", formatBytes(4_400_000_000))
         assertEquals("4.1 GB freed", formatFreed(4_400_000_000))
+        assertEquals("512.0 B", formatBytes(512))
         assertEquals("0 B", formatBytes(0))
 
         Locale.setDefault(Locale.FRANCE)

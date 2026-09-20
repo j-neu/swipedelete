@@ -6,14 +6,17 @@ private const val KIB = 1024
 private val BYTE_UNITS = arrayOf("B", "KB", "MB", "GB", "TB")
 
 /**
- * Renders a byte count using 1024-based units (B, KB, MB, GB, TB) with a single
- * decimal place, except that values below 1 KiB are whole bytes with no decimal.
+ * Renders a byte count using 1024-based units (B, KB, MB, GB, TB) with one
+ * decimal place. Zero is the only value rendered without a decimal (`"0 B"`);
+ * every other value keeps one decimal, e.g. `"512.0 B"`. After rounding, a
+ * value that would render as `1024.0` is promoted to the next unit so
+ * `1_048_575` renders as `"1.0 MB"` rather than `"1024.0 KB"`.
  *
  * Formatting is pinned to [Locale.US] so the decimal separator is always a dot;
  * the AC-9 wording assertions depend on that.
  */
 fun formatBytes(bytes: Long): String {
-    if (bytes < KIB) return "$bytes B"
+    if (bytes == 0L) return "0 B"
 
     var value = bytes.toDouble()
     var unit = 0
@@ -21,8 +24,14 @@ fun formatBytes(bytes: Long): String {
         value /= KIB
         unit++
     }
+    if (unit < BYTE_UNITS.lastIndex && roundsTo1024(value)) {
+        value /= KIB
+        unit++
+    }
     return String.format(Locale.US, "%.1f %s", value, BYTE_UNITS[unit])
 }
+
+private fun roundsTo1024(value: Double): Boolean = Math.round(value * 10.0) / 10.0 >= KIB
 
 /**
  * Renders bytes that are held in quarantine, i.e. not yet freed. Together with

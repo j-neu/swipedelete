@@ -39,9 +39,13 @@ class HashingTest {
     }
 
     @Test
-    fun `Sha256Hasher satisfies the Hasher contract`() {
+    fun `hasher contract holds through an interface-typed reference`() = runTest {
         val hasher: Hasher = Sha256Hasher()
-        assertTrue(hasher is Sha256Hasher)
+        val payload = "swipedelete".toByteArray()
+
+        val expected = MessageDigest.getInstance("SHA-256").digest(payload).toHex()
+
+        assertEquals(expected, hasher.sha256(ByteArrayInputStream(payload)))
     }
 }
 
