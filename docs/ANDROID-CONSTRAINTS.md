@@ -417,3 +417,42 @@ Deleting the MediaStore row destroys the file: the public API has no index-only 
 7. **Owned-media silence (API 36).** Create a file with the app itself, then `contentResolver.delete(uri, null, null)` and assert it succeeds with **no** system dialog; record this as evidence for the confirmation ladder.
 8. **Availability below 30.** On an API 29 target, confirm `MediaStore.createTrashRequest` does not exist (compile-time `NoSuchMethodError`/missing symbol) and that there is no OS trash path; record the API level.
 9. **Record results in this file**, marking each of 2–7 pass/fail with device model, API level and exact observed exception messages. If the 2001-URI call does **not** throw on API 36 (e.g. a provider build without the compat change), record it and keep the 500 chunk anyway.
+
+---
+
+## V1 addendum — resolved catalog
+
+**Task:** M0-T01 (Task 10) — resolves the two open decisions **G4** (Kotlin/AGP/Gradle forward-compatibility) and **G5** (KSP vs Kotlin) that §4 of this note left to Task 10, and records one further compatibility constraint the build surfaced.
+**Date resolved:** 2026-09-19. **Method:** every value below is backed by an actual green build on this machine — `.\gradlew.bat assembleDebug` across all 15 modules, plus `:app:assembleDebug`, `:app:testDebugUnitTest` and `lintDebug` — not by reading a compatibility table alone.
+
+### Final pinned set
+
+| item | value | note |
+|---|---|---|
+| Kotlin (KGP) | **2.3.21** | G5 option 2. KGP 2.3.20–2.3.21 is fully supported with Gradle 7.6.3–9.3.0 and AGP 8.2.2–9.0.0. |
+| KSP | **2.3.12** | Inside KSP's documented KGP range 2.2.10–2.3.x. |
+| AGP | **8.13.2** | Max API level 36.1 (so `compileSdk 36` is supported), minimum Gradle 8.13. Keeps `org.jetbrains.kotlin.android`, which AGP 9.0 deprecates in favour of built-in Kotlin. |
+| Gradle (wrapper) | **8.14.5** | Inside Kotlin 2.3.21's fully-supported range and above AGP 8.13.2's minimum; Gradle's matrix tests 8.14.x with AGP 7.3–8.13. |
+| Compose BOM | **2026.06.01** | Compose UI 1.11.4 / Material3 1.4.0; AAR metadata is `minCompileSdk=35`, `minAndroidGradlePluginVersion=8.6.0`. |
+| compileSdk / targetSdk / minSdk | **36 / 36 / 26** | Controller decision: `android-36` is the highest installed platform; no SDK download. |
+| JDK | **21** (Temurin 21 in CI, `C:\Program Files\Java\jdk-21` locally) | AGP 8.13 requires JDK ≥ 17. |
+
+### G4 decision
+
+Chose option (b) in spirit — the fully-supported set — but with Kotlin 2.3.x rather than 2.4.20 (see G5): **KGP 2.3.21 + AGP 8.13.2 + Gradle 8.14.5**. The "newest stable" trio from the §5 recommended pin (AGP 9.4.1 + Gradle 9.7.1 + Kotlin 2.4.20) was rejected because (1) it exceeds Kotlin 2.4.20's documented AGP/Gradle maxima (9.3.1 / 9.7.0), (2) AGP 9.0+ deprecates `org.jetbrains.kotlin.android` — the plugin type the module skeleton uses — in favour of built-in Kotlin and a new DSL, and (3) AGP 8.13.2 is the newest AGP that is *fully supported* by the chosen KGP while still supporting `compileSdk 36`. Priority applied: **a green build over a newer version string.**
+
+### G5 decision
+
+Chose option 2: **Kotlin 2.3.21** (latest 2.3.x) so that **KSP 2.3.12** sits inside its documented KGP range (2.2.10–2.3.x). Option 1 (KSP 2.3.12 against Kotlin 2.4.20) and option 3 (KAPT instead of KSP) were not needed. Accepted consequence: Kotlin 2.3.21's fully-supported AGP maximum is 9.0.0, which is why AGP is pinned to 8.13.2 rather than 9.3.x.
+
+### Third constraint surfaced by the build (compileSdk 36 ceiling on Compose)
+
+Not a V1 gap, but it fixes the catalog: **Compose BOM 2026.08.00 and newer cannot be used with `compileSdk 36`.** `androidx.compose.ui:ui-android:1.12.0/1.12.1` declares `minCompileSdk=37` and `minAndroidGradlePluginVersion=9.1.0` in its AAR metadata, so `:app:checkDebugAarMetadata` fails against AGP 8.13.2 / `compileSdk 36`:
+
+```
+Dependency 'androidx.compose.ui:ui-android:1.12.1' requires libraries and applications that
+depend on it to compile against version 37 or later of the Android APIs.
+:app is currently compiled against android-36.
+```
+
+Because the controller fixed `compileSdk` at 36 (no `platforms;android-37.0` download), the catalog pins **Compose BOM 2026.06.01** — the newest BOM verified to stay at `minCompileSdk=35`. This is the first value to raise when the project later moves to `compileSdk 37`.
