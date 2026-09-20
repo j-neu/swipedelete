@@ -21,8 +21,23 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Pin the SDK the build actually compiles against (compileSdk/targetSdk 36
+      # in gradle/libs.versions.toml) instead of relying on whatever the runner
+      # image happens to contain.
+      - name: Set up Android SDK (platform 36 + build-tools)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: |
+            platforms;android-36
+            build-tools;36.0.0
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      # Unqualified `testDebugUnitTest` fans out across every Android module, so a
+      # regression in :core:storage (journal, quarantine, reconciler, chaos,
+      # protected roots, raw), :core:database, :core:designsystem or
+      # :feature:settings fails CI — not only :app's tests as the old
+      # `:app:testDebugUnitTest` did.
       - name: Assemble, test and lint
-        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest lintDebug
+        run: ./gradlew :app:assembleDebug testDebugUnitTest lintDebug
