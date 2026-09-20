@@ -496,7 +496,12 @@ class RawStorageGateway(
         val frontier = ArrayDeque<File>()
         frontier.addLast(directory)
         while (frontier.isNotEmpty()) {
-            val children = list(frontier.removeFirst()) ?: continue
+            // Unreadability is treated as media-bearing, not as a dead end. If a
+            // directory cannot be listed the gateway cannot see whether it holds
+            // media, so `deleteRecursively()` would route that hidden media
+            // through the AC-10-exempt raw path. Refuse instead, matching the
+            // file-level "unreadable means media" rule in [RawMediaPolicy].
+            val children = list(frontier.removeFirst()) ?: return true
             for (child in children) {
                 if (child.isDirectory) {
                     val canonical = RawPaths.canonical(child)

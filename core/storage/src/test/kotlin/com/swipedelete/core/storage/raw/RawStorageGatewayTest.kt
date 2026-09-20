@@ -467,4 +467,32 @@ class RawStorageGatewayTest {
         assertTrue(source.exists(), "the source must be untouched")
         assertTrue(destination.exists())
     }
+
+    @Test
+    fun `an unlistable directory inside a delete subtree is treated as media-bearing`() = runTest {
+        // AC-10: if a directory cannot be listed, the gateway cannot prove it
+        // holds no media, so a recursive delete must be refused. Treating an
+        // unreadable directory as a dead end would `deleteRecursively()` a
+        // subtree it could not read — the unsafe direction.
+        val root = newRoot()
+        val subtree = dir(root, "subtree")
+        val nested = dir(subtree, "nested")
+        writeFile(nested, "notes.txt", "plain text".toByteArray())
+        val gateway = RawStorageGateway(
+            roots = listOf(root),
+            hasAllFilesAccess = true,
+            listChildren = { directory ->
+                if (directory.name == "nested") null else directory.listFiles()?.toList()
+            },
+        )
+        val source = gateway.sources().single()
+        val item = itemFor(subtree, source, "application/octet-stream")
+
+        val result = gateway.deletePermanently(listOf(item))
+
+        assertTrue(result is DeleteResult.Partial, "an unreadable subtree must be refused, was $result")
+        assertEquals(RawStorageGateway.MEDIA_NOT_PERMITTED, result.failures.single().reason)
+        assertTrue(subtree.exists(), "an unreadable subtree must not be deleted recursively")
+        assertTrue(File(nested, "notes.txt").exists(), "bytes the gateway could not see must survive")
+    }
 }
