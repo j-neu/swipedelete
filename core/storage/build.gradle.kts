@@ -15,10 +15,26 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+
+    testFixtures {
+        enable = true
+    }
 }
 
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
+}
+
+dependencies {
+    api(project(":core:model"))
+    api(libs.kotlinx.coroutines.core)
+
+    testFixturesImplementation(project(":core:model"))
+    testFixturesImplementation(libs.kotlinx.coroutines.core)
+
+    testImplementation(libs.kotlin.test.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":core:storage")))
 }
