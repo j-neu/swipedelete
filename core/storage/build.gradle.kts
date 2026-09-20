@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -32,11 +33,13 @@ dependencies {
     api(project(":core:common"))
     api(project(":core:database"))
     api(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
 
     testFixturesImplementation(project(":core:model"))
     testFixturesImplementation(libs.kotlinx.coroutines.core)
 
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.kotlinx.serialization.json)
     testImplementation(testFixtures(project(":core:storage")))
 }

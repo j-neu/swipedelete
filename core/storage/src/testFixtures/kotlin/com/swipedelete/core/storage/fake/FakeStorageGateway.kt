@@ -53,6 +53,7 @@ class FakeStorageGateway(
 
     private val mutex = Mutex()
     private val files = LinkedHashMap<String, MediaItem>()
+    private val contents = LinkedHashMap<String, ByteArray>()
     private val sourcesById = LinkedHashMap<SourceId, SourceRef>()
     private val changes = MutableSharedFlow<ChangeEvent>(extraBufferCapacity = 64)
 
@@ -65,6 +66,27 @@ class FakeStorageGateway(
     /** Registers a source so [createFileAt] can attribute files to it. */
     fun addSource(source: SourceRef) {
         sourcesById[source.id] = source
+    }
+
+    /**
+     * When set, [capacity] reports this many free bytes instead of deriving them
+     * from the registered files. Lets a test force the space pre-flight without
+     * fabricating a nearly-full volume.
+     */
+    var capacityFreeBytes: Long? = null
+
+    /**
+     * Registers [item] so the gateway can serve it, and the bytes [openStream]
+     * will yield for it. The default is empty content, which keeps every
+     * pre-existing test that only checks existence working unchanged.
+     */
+    fun register(item: MediaItem, content: ByteArray = ByteArray(0)) {
+        val path = item.path ?: return
+        files[path] = item
+        contents[path] = content
+        sourcesById.getOrPut(item.sourceId) {
+            sourceFor(item.sourceId, path.substringBeforeLast('/', ""))
+        }
     }
 
     /** Creates a file that physically occupies [path], as if another app wrote it. */
@@ -125,6 +147,8 @@ class FakeStorageGateway(
     }
 
     override fun openStream(item: MediaItem): InputStream {
+        val content = item.path?.let { contents[it] }
+        if (content != null) return ByteArrayInputStream(content)
         val size = (item.path?.let { files[it]?.sizeBytes } ?: item.sizeBytes)
             .coerceIn(0L, 1_048_576L)
             .toInt()
@@ -207,7 +231,7 @@ class FakeStorageGateway(
         return Capacity(
             totalBytes = TOTAL_BYTES,
             usedBytes = used,
-            freeBytes = TOTAL_BYTES - used,
+            freeBytes = capacityFreeBytes ?: (TOTAL_BYTES - used),
             reclaimableBytes = 0L,
         )
     }
@@ -215,14 +239,6 @@ class FakeStorageGateway(
     override fun watch(source: SourceRef): Flow<ChangeEvent> = changes.asSharedFlow()
 
     // --- Internals ---
-
-    private fun register(item: MediaItem) {
-        val path = item.path ?: return
-        files[path] = item
-        sourcesById.getOrPut(item.sourceId) {
-            sourceFor(item.sourceId, path.substringBeforeLast('/', ""))
-        }
-    }
 
     private fun sourceFor(id: SourceId, treeUri: String) = SourceRef(
         id = id,

@@ -36,6 +36,12 @@ androidxTestCore = "1.7.0"
 # compatible), and it is the version :core:common's DispatchersProvider exposes.
 coroutines = "1.11.0"
 
+# kotlinx-serialization. 1.11.0 is the newest stable and is built against
+# kotlin-stdlib 2.3.20, i.e. it is aligned with the resolved Kotlin 2.3.21
+# toolchain. Used by :core:storage's quarantine sidecar codec (M0-T08) instead
+# of org.json, which is stubbed in JVM unit tests.
+kotlinxSerialization = "1.11.0"
+
 # Processing / libraries later M0 tasks consume
 hilt = "2.60.1"
 room = "2.8.5"
@@ -53,6 +59,8 @@ androidx-test-core = { group = "androidx.test", name = "core", version.ref = "an
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
+
+kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
@@ -88,4 +96,5 @@ android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
