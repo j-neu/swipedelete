@@ -7,11 +7,20 @@
           androidTest manifest keeps it out of the shipped app while still
           exercising the genuine DocumentsContract / ContentResolver path.
         -->
+        <!--
+          API 30+ enforces DocumentsProvider.attachInfo: the provider must be
+          exported, grant URI permissions and be protected by MANAGE_DOCUMENTS on
+          both read and write. Omitting the permission crashes the process before
+          any test runs, so the instrumented SAF suite cannot even start.
+        -->
         <provider
             android:name="com.swipedelete.core.storage.saf.TestDocumentsProvider"
             android:authorities="${applicationId}.documents"
             android:exported="true"
-            android:grantUriPermissions="true">
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:readPermission="android.permission.MANAGE_DOCUMENTS"
+            android:writePermission="android.permission.MANAGE_DOCUMENTS">
             <intent-filter>
                 <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
             </intent-filter>

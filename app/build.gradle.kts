@@ -25,6 +25,10 @@ android {
         versionName = "0.1.0"
 
         buildConfigField("boolean", "ALL_FILES_ACCESS", if (noAllFilesAccess) "false" else "true")
+
+        // M0-T17: the acceptance suite is instrumented so it exercises real files,
+        // real Room and the real assembled graph on a device (AC-1/3/5/7).
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -92,4 +96,15 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.navigation.testing)
+
+    // M0-T17 instrumented acceptance suite: real device, real files, real Room.
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    // Room.databaseBuilder (the real on-disk journal) needs room-runtime on the
+    // androidTest classpath too: :core:database keeps it `implementation`, so it
+    // is not transitive.
+    androidTestImplementation(libs.room.runtime)
 }

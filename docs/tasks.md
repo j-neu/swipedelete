@@ -140,6 +140,8 @@ These resolve the spec's `[VERIFY]` markers. Each deliverable is a dated note ap
 
 **Exit criteria:** AC-1, AC-3, AC-5 pass; a file can be quarantined, the app killed mid-operation, and restored correctly.
 
+**Result (2026-09-20, Task 26):** M0 accepted on the API 36 emulator against real files, a real Room journal and the assembled graph — AC-1, AC-3, AC-5 and AC-7 verified (AC-5 by abandoned-coroutine + real `Reconciler`, not an OS kill); API 26/30/33 coverage remains an open gap. See `docs/M0-ACCEPTANCE.md`.
+
 ### Task 10 (M0-T01): Repository, Gradle multi-module skeleton and CI
 
 **Files:**

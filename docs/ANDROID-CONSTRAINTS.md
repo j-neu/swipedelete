@@ -163,9 +163,27 @@ No value in this note is a range or "latest"; each is an exact string read from 
 
 What actually happens when the platform cap is exceeded: **silent eviction of the oldest persisted grants for that app**, not an exception and not unbounded growth. On API 30+ the 513th grant causes the least-recently-*created* persisted grants to be released until 512 remain; on API 26–29 the same happens above 128. The app loses read/write access to the evicted folder with no callback and no error — a later access simply fails with `SecurityException`/`FileNotFoundException` from the provider, which is the dangerous, hard-to-attribute case. The separate, non-cap failure is `SecurityException("No persistable permission grants found for UID ...")` thrown by `takePersistableUriPermission` when the URI was never offered a persistable grant (or its transient grant has expired). **Mitigation (already the M0-T16 design, sharpened here):** (1) surface the count and the cap in the grant UI ("14 of 20 slots used") so the limit is never invisible; (2) offer one-tap revoke of the oldest/least-used grant so the user makes room explicitly *before* the app would need to — relying on OS eviction is not acceptable because it is silent and unordered from the user's perspective; (3) wrap every `takePersistableUriPermission` call in a `try/catch (SecurityException)` and treat failure as "slot not granted", never as success; (4) verify after persisting that the grant is present in `getPersistedUriPermissions()`. At `MAX_GRANTS = 20` the app's own cap fires long before the platform's, so this failure mode is a hypothesis to test, not a risk the shipped app should ever encounter.
 
-### Pending device verification
+### Device result — partial (2026-09-20)
 
-**Status: NOT PERFORMED.** No emulator was running and no device was attached when this note was written, and the controller explicitly excluded booting an emulator in this task (unbounded boot time). The following is the exact check to run later; it must not be reported as done until it is run and the observed device model, API level and counts are recorded here.
+**Status: PARTIALLY PERFORMED on the API 36 emulator during Task 26 (M0-T17). The API 26–29 low-end leg was NOT performed** — those platform images are not installed and downloading them was deliberately declined for this session — so **no multi-API claim is made** here or anywhere in the M0 acceptance record.
+
+What was actually observed on device, API 36 (`Medium_Phone`, AVD `google_apis_playstore`), by `:feature:settings:connectedDebugAndroidTest` → `OnboardingInstrumentedTest`:
+
+| check | observed on API 36 | verdict |
+|---|---|---|
+| persisted grants held by the clean-install app | **0** | baseline |
+| OS cap for the running API | **512** (API 36 ≥ 30) | matches the AOSP claim in *Claims* |
+| `takePersistableUriPermission` on a tree URI the picker never offered (`content://com.android.externalstorage.documents/tree/primary%3ASwipeDeleteNeverPicked`) | `SecurityException("No persistable permission grants found for UID … and Uri …")` | confirms the **non-cap** failure mode, distinct from the cap |
+| the store's handling of that failure (`ContentResolverGrantStore.persist`) | `PersistResult.GrantDenied`; `persistedUriPermissions` **unchanged** | V2 mitigation (3)+(4) verified on a real device |
+
+**Still unverified on device (and not claimed):**
+
+- **20-grant durability (original steps 2–3).** No automated path can synthesise 20 *real* persisted grants: `ACTION_OPEN_DOCUMENT_TREE` needs 20 live user picks, and a same-UID test `DocumentsProvider` cannot be persisted at all — a direct probe during this task threw the same `SecurityException` above, which is why the two `assumeTrue`-gated legs of `OnboardingInstrumentedTest` skip on a clean emulator. The app-side cap (`MAX_GRANTS = 20` returning `GrantCapReached` *before* the platform is asked, so the 21st grant cannot evict an existing one) remains proven only by the host-JVM tests, not on device.
+- **OS-cap eviction boundary (original step 4).** Needs 513 real grants; not attempted.
+
+So the V2 *decisions* stand unchanged: `MAX_GRANTS = 20` is a product cap, the OS cap is 512/128, eviction is silent, and the `SecurityException` is a separate non-cap failure. The device evidence now covers the baseline count, the 512 cap for API 36, and the `SecurityException` → `GrantDenied` mitigation; it does not cover the 20-grant durability or the eviction boundary on any API.
+
+#### Remaining procedure (unchanged, not yet run)
 
 1. **Start a target.** Emulator (API 36): `& "$env:LOCALAPPDATA\Android\Sdk\emulator\emulator.exe" -avd Medium_Phone` (use the full path — `ANDROID_HOME`/`ANDROID_SDK_ROOT` are unset). For the low-end leg attach a physical device on API 26–29 and confirm with `adb devices`.
 2. **Install and drive onboarding.** `./gradlew :app:installDebug`, then repeat the Task 25 `ACTION_OPEN_DOCUMENT_TREE` pick **20 times** with 20 distinct folders. After each pick, log `contentResolver.persistedUriPermissions.size`. Expected: 1 → 20, then the 21st is refused by the app's own `MAX_GRANTS` check and surfaces as `GrantCapReached` (not a crash).
@@ -173,7 +191,7 @@ What actually happens when the platform cap is exceeded: **silent eviction of th
 4. **OS-cap boundary probe (optional, expensive — needs 513 real grants).** With a scratch build that bypasses the app cap, grant to 513. On API 30+ assert `persistedUriPermissions.size == 512` and that the **oldest** URI is gone, with **no** exception thrown (eviction); on API 26–29 the same probe expects **128**. Capture `adb logcat -s UriGrantsManagerService` — trim messages appear only in DEBUG builds.
 5. **Record results in this file**, marking each of the above pass/fail with the device model and API level.
 
-The instrumented carrier for steps 2–3 already exists in the plan: `feature/settings/src/androidTest/.../OnboardingInstrumentedTest.kt` (real `ACTION_OPEN_DOCUMENT_TREE`, `docs/tasks.md:1023`).
+The instrumented carrier for steps 2–3 already exists in the plan: `feature/settings/src/androidTest/.../OnboardingInstrumentedTest.kt` (real `ACTION_OPEN_DOCUMENT_TREE`, `docs/tasks.md:1023`). Task 26 added a non-gated leg it can run without user interaction: `aTreeUriWithNoPersistableGrantIsDeniedAndAddsNothing`.
 
 ---
 

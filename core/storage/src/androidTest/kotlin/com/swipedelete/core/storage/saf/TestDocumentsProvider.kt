@@ -1,12 +1,11 @@
 package com.swipedelete.core.storage.saf
 
 import android.content.Context
-import android.content.pm.ProviderInfo
+import android.content.Intent
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
-import android.os.Process
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
 import androidx.test.core.app.ApplicationProvider
@@ -36,8 +35,15 @@ import java.io.FileNotFoundException
 class TestDocumentsProvider : DocumentsProvider() {
 
     override fun onCreate(): Boolean {
-        baseDir().mkdirs()
-        ROOTS.forEach { File(baseDir(), it).mkdirs() }
+        // The provider is installed at process start, *before* the test
+        // instrumentation is registered, so ApplicationProvider (which needs a
+        // registered instrumentation) throws here. Resolve the base directory
+        // from the provider's own context instead, and publish it so the test
+        // body reads back the identical path rather than recomputing it.
+        val base = File(requireNotNull(context).cacheDir, BASE_DIR_NAME)
+        resolvedBaseDir = base
+        base.mkdirs()
+        ROOTS.forEach { File(base, it).mkdirs() }
         return true
     }
 
@@ -156,6 +162,20 @@ class TestDocumentsProvider : DocumentsProvider() {
 
         private const val DOCUMENT_MIME = "application/octet-stream"
 
+        /** The `cacheDir` subdirectory backing every root; shared with the test body. */
+        const val BASE_DIR_NAME: String = "saf-tree"
+
+        /**
+         * The one backing directory, published by [TestDocumentsProvider.onCreate]
+         * from the provider context. It is set before any test body runs because
+         * the provider is installed at process start; the fallback only matters if
+         * a caller reads the path before the provider has ever been created, and
+         * resolves to the same `cacheDir` (the provider and the instrumentation
+         * target share one application).
+         */
+        @Volatile
+        private var resolvedBaseDir: File? = null
+
         private val ROOT_COLUMNS = arrayOf(
             DocumentsContract.Root.COLUMN_ROOT_ID,
             DocumentsContract.Root.COLUMN_DOCUMENT_ID,
@@ -175,12 +195,14 @@ class TestDocumentsProvider : DocumentsProvider() {
         )
 
         /**
-         * The **one** backing directory, pinned to the instrumentation target
-         * application's `cacheDir` so the provider (which may run in the test
-         * APK's package) and the test body always resolve the same path.
+         * The **one** backing directory, published by the provider at install
+         * time (see [resolvedBaseDir]) so the provider and the test body always
+         * resolve the same path. The `ApplicationProvider` fallback resolves to
+         * the same `cacheDir` when read before the provider exists.
          */
         fun baseDir(): File =
-            File(ApplicationProvider.getApplicationContext<Context>().cacheDir, "saf-tree")
+            resolvedBaseDir
+                ?: File(ApplicationProvider.getApplicationContext<Context>().cacheDir, BASE_DIR_NAME)
 
         /** The directory backing [root] (`baseDir()/<root>`). */
         fun rootDir(root: String): File = File(baseDir(), root)
@@ -190,17 +212,28 @@ class TestDocumentsProvider : DocumentsProvider() {
          * runtime from the installed providers rather than reconstructed from a
          * package name — the manifest and this lookup then cannot disagree about
          * `<applicationId>`.
+         *
+         * It is deliberately **not** `queryContentProviders(null, uid, 0)` plus a
+         * `.documents` suffix match: on this platform that call returns every
+         * provider in the system (the uid argument does not filter), and several
+         * system authorities end with `.documents` (`externalstorage`,
+         * `downloads`, `media`). The first match was therefore the external
+         * storage provider, and every tree query silently returned nothing. The
+         * lookup below asks for the `DOCUMENTS_PROVIDER` action and keeps only
+         * *this package's* registration, so the test provider is the only
+         * candidate.
          */
         fun resolveAuthority(context: Context): String {
-            val providers: List<ProviderInfo> = context.packageManager
-                .queryContentProviders(null, Process.myUid(), 0)
-            return providers
+            val own: List<String> = context.packageManager
+                .queryIntentContentProviders(Intent(TestDocumentsContract.ACTION_DOCUMENTS_PROVIDER), 0)
+                .mapNotNull { it.providerInfo }
+                .filter { it.packageName == context.packageName }
                 .mapNotNull { it.authority }
-                .firstOrNull { it.endsWith(TestDocumentsContract.AUTHORITY_SUFFIX) }
+            val expected = context.packageName + TestDocumentsContract.AUTHORITY_SUFFIX
+            return own.firstOrNull { it == expected }
                 ?: error(
-                    "no provider with authority suffix " +
-                        "'${TestDocumentsContract.AUTHORITY_SUFFIX}' is installed for " +
-                        context.packageName,
+                    "no provider '$expected' is installed for ${context.packageName}; " +
+                        "found ${own.ifEmpty { listOf("<none>") }}",
                 )
         }
     }

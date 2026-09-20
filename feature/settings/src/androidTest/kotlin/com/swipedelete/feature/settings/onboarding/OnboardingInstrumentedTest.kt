@@ -52,8 +52,14 @@ class OnboardingInstrumentedTest {
     private fun heldTreeUris(): List<String> =
         context.contentResolver.persistedUriPermissions.map { it.uri.toString() }
 
+    /**
+     * Names are camelCase, not backticked prose: this module's `minSdk` is 26, so
+     * D8 targets DEX version 038, and space characters in method names are only
+     * legal from DEX version 040 (API 30). Backticked prose names compile on the
+     * host JVM but make the instrumented APK undeployable.
+     */
     @Test
-    fun `onboarding asks the system for a persisted tree grant with read and write`() {
+    fun onboardingAsksTheSystemForAPersistedTreeGrantWithReadAndWrite() {
         val intent = ActivityResultContracts.OpenDocumentTree().createIntent(context, null)
 
         assertEquals(
@@ -69,7 +75,7 @@ class OnboardingInstrumentedTest {
     }
 
     @Test
-    fun `the 21st grant is refused and the platform grant set is unchanged`() = runBlocking {
+    fun the21stGrantIsRefusedAndThePlatformGrantSetIsUnchanged() = runBlocking<Unit> {
         val held = heldTreeUris()
         val osCap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) 512 else 128
         Log.i(
@@ -94,7 +100,7 @@ class OnboardingInstrumentedTest {
     }
 
     @Test
-    fun `revoking releases the grant and is idempotent`() = runBlocking {
+    fun revokingReleasesTheGrantAndIsIdempotent() = runBlocking {
         val held = heldTreeUris()
         assumeTrue("Manual setup: grant at least one tree with the system picker first", held.isNotEmpty())
         val target = held.first()
@@ -108,6 +114,48 @@ class OnboardingInstrumentedTest {
         // A second revoke of the same id is a no-op, not an error.
         store.revoke(SourceId(target))
         assertFalse(heldTreeUris().contains(target))
+    }
+
+    /**
+     * The V2 device check's executable leg. A tree URI the platform never offered
+     * a persistable grant for must be reported as "slot not granted" and must add
+     * nothing.
+     *
+     * On API 30+ `takePersistableUriPermission` throws
+     * `SecurityException("No persistable permission grants found for UID ... and
+     * Uri ...")` — the **non-cap** failure V2 documents, distinct from the
+     * silent-eviction cap. This asserts the mitigation V2 requires on a real
+     * device: the `SecurityException` is treated as a refusal, never as success,
+     * and the persisted grant set is byte-for-byte unchanged afterwards. No user
+     * interaction is needed, so this leg always runs (it is not gated by
+     * [assumeTrue] like the 21-grant leg).
+     *
+     * The folder is deliberately one no user could have picked, so the URI is
+     * guaranteed to have no grant on any device.
+     */
+    @Test
+    fun aTreeUriWithNoPersistableGrantIsDeniedAndAddsNothing() = runBlocking<Unit> {
+        val before = heldTreeUris()
+        val neverOffered =
+            "content://com.android.externalstorage.documents/tree/primary%3ASwipeDeleteNeverPicked"
+        assumeTrue(
+            "this leg requires the URI to be un-granted; a device with that grant skips",
+            neverOffered !in before,
+        )
+
+        val result = repository.persist(neverOffered, GrantMutator.FLAG_READ)
+
+        assertEquals(
+            "an un-granted URI must be reported as denied, never as a persisted slot",
+            PersistResult.GrantDenied,
+            result,
+        )
+        assertEquals(
+            "a denied grant must not alter the platform grant set",
+            before,
+            heldTreeUris(),
+        )
+        Log.i(TAG, "V2 device check: un-granted URI refused (GrantDenied) and the grant set survived intact")
     }
 
     private companion object {
