@@ -21,6 +21,14 @@ composeBom = "2026.06.01"
 # kotlin-test-junit is kotlin.test's JUnit 4 backend (brings junit:junit 4.13.x
 # transitively). Chosen over org.junit.Assert.* because the M0-T02 test source
 # uses the kotlin.test argument order (message last).
+#
+# M0-T04 first needs Robolectric (local JVM Room/SQLite integration tests).
+# Robolectric 4.17 is the newest stable; tests pin @Config(sdk = [34]) because
+# Robolectric's instrumented android-all artifacts lag the installed platforms.
+# androidx.test:core provides ApplicationProvider; 1.7.0 is the newest stable.
+junit = "4.13.2"
+robolectric = "4.17"
+androidxTestCore = "1.7.0"
 
 # Coroutines
 # 1.11.0 is the newest stable release; it is built against Kotlin stdlib 2.2.20,
@@ -38,6 +46,10 @@ paging = "3.5.1"
 
 [libraries]
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
+
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidxTestCore" }
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
