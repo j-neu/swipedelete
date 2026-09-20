@@ -17,6 +17,13 @@ ksp = "2.3.12"
 # rules out.
 composeBom = "2026.06.01"
 
+# Navigation + Activity (M0-T15 app shell). navigation 2.9.8 is the newest 2.9.x
+# and the release this task built and tested against; the 2.10.x line was not
+# verified against the compileSdk 36 / AGP 8.13.2 pin above and is not needed by
+# M0. activity-compose 1.10.1 is the matching stable Activity release.
+navigation = "2.9.8"
+activityCompose = "1.10.1"
+
 # Test
 # kotlin-test-junit is kotlin.test's JUnit 4 backend (brings junit:junit 4.13.x
 # transitively). Chosen over org.junit.Assert.* because the M0-T02 test source
@@ -47,7 +54,17 @@ coroutines = "1.11.0"
 kotlinxSerialization = "1.11.0"
 
 # Processing / libraries later M0 tasks consume
-hilt = "2.60.1"
+#
+# Hilt is pinned to 2.58, NOT the newest stable 2.60.1 that M0-T01's constraints
+# review resolved. Dagger 2.59 made the Hilt Gradle plugin require AGP 9.0.0+
+# ("Updated minimum required AGP version to 9.0.0", Dagger 2.59 release notes),
+# and this project deliberately stays on AGP 8.13.2 (AGP 9 deprecates the
+# org.jetbrains.kotlin.android plugin — see the toolchain comment above).
+# 2.58 is the last release before that requirement, so it is the newest Hilt
+# whose Gradle plugin applies to AGP 8.13.2. Verified empirically (M0-T15):
+# 2.60.1 -> "The Hilt Android Gradle plugin is only compatible with AGP 9.0.0
+# or higher (found 8.13.2)".
+hilt = "2.58"
 room = "2.8.5"
 media3 = "1.11.1"
 coil = "3.6.3"
@@ -64,6 +81,7 @@ androidx-test-runner = { group = "androidx.test", name = "runner", version.ref =
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidxTestExtJunit" }
 
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
@@ -77,6 +95,10 @@ androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-te
 androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-compose-foundation = { group = "androidx.compose.foundation", name = "foundation" }
+
+androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigation" }
+androidx-navigation-testing = { group = "androidx.navigation", name = "navigation-testing", version.ref = "navigation" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
 
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
@@ -107,3 +129,4 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }

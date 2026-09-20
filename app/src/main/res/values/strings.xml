@@ -11,4 +11,13 @@
     <string name="feature_narrow_affordance_photo_video">Grant photo and video access to include the whole library</string>
     <string name="feature_narrow_reason_granted_trees">Narrower here: only the folders you granted are scanned.</string>
     <string name="feature_narrow_reason_non_media_global">Narrower here: non-media files outside your folders are excluded.</string>
+
+    <!-- App-shell destination titles (M0-T15). Placeholder screens until the owning task ships. -->
+    <string name="nav_onboarding">Welcome</string>
+    <string name="nav_deck">Deck</string>
+    <string name="nav_viewer">Viewer</string>
+    <string name="nav_dashboard">Dashboard</string>
+    <string name="nav_quarantine">Quarantine</string>
+    <string name="nav_history">History</string>
+    <string name="nav_settings">Settings</string>
 </resources>

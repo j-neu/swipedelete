@@ -33,6 +33,16 @@
         android:name="com.swipedelete.app.SwipeDeleteApplication"
         android:allowBackup="false"
         android:label="SwipeDelete"
-        android:supportsRtl="true" />
+        android:supportsRtl="true">
+
+        <activity
+            android:name="com.swipedelete.app.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
 
 </manifest>

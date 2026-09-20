@@ -2,6 +2,8 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.ksp)
+    alias(libs.plugins.hilt)
 }
 
 // `-PnoAllFilesAccess` produces the Play-submittable contingency build of SPEC 4.4:
@@ -51,14 +53,40 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:common"))
     implementation(project(":core:model"))
+    implementation(project(":core:database"))
+    implementation(project(":core:storage"))
+    implementation(project(":core:designsystem"))
+
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.material3)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.navigation.compose)
+
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.coroutines.android)
+
+    // Room.databaseBuilder is referenced by DatabaseModule; :core:database keeps
+    // room-runtime as an `implementation` dependency, so it is not on the app's
+    // compile classpath transitively.
+    implementation(libs.room.runtime)
+
+    implementation(libs.hilt.android)
+    ksp(libs.hilt.compiler)
+
+    // Compose's test host activity (ComponentActivity) for local Compose tests.
+    debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlin.test.junit)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(testFixtures(project(":core:storage")))
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.androidx.navigation.testing)
 }
