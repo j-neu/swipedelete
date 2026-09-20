@@ -32,6 +32,7 @@ fun DestructiveAction(
     enabled: Boolean = true,
     iconContentDescription: String = stringResource(R.string.cd_destructive),
 ) {
+    requireIconContentDescription(iconContentDescription)
     val colors = SwipeDeleteTheme.colors
     Button(
         onClick = onClick,
@@ -54,5 +55,17 @@ fun DestructiveAction(
         )
         Spacer(Modifier.width(SwipeDeleteDimens.SpacingSmall))
         Text(text = text)
+    }
+}
+
+/**
+ * Guards the icon half of the icon+text+colour contract. A blank content
+ * description would silently demote the icon to decorative, leaving colour as
+ * the sole destructive signal (SPEC 11.4), so it is rejected loudly.
+ */
+internal fun requireIconContentDescription(iconContentDescription: String) {
+    require(iconContentDescription.isNotBlank()) {
+        "DestructiveAction requires a non-empty iconContentDescription: the icon must not be " +
+            "demoted to decorative, or colour would become the sole carrier of meaning (SPEC 11.4)"
     }
 }

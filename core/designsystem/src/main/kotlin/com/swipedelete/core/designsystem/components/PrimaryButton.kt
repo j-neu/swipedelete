@@ -11,7 +11,16 @@ import com.swipedelete.core.designsystem.R
 import com.swipedelete.core.designsystem.SwipeDeleteDimens
 import com.swipedelete.core.designsystem.SwipeDeleteTheme
 
-/** The non-destructive primary action, honouring the 48 dp touch-target floor. */
+/**
+ * The **non-destructive** primary action, honouring the 48 dp touch-target
+ * floor.
+ *
+ * Do not use this for deletion, commit or any other destructive path: it has no
+ * icon and carries the accent (not destructive) colour, so it cannot satisfy
+ * SPEC 11.4's icon+text+colour rule. Destructive actions must go through
+ * [DestructiveAction] (or a component that renders it), which is the only
+ * affordance in this module that structurally guarantees all three signals.
+ */
 @Composable
 fun PrimaryButton(
     onClick: () -> Unit,

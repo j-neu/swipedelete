@@ -18,9 +18,15 @@ import com.swipedelete.core.designsystem.SwipeDeleteDimens
 import com.swipedelete.core.designsystem.SwipeDeleteTheme
 
 /**
- * The staging strip (SPEC 5.2): a staged delete is visible and recoverable, not
- * one-frame-commit. It states the count and offers a text "Undo" affordance.
- * Presentation-only — the caller owns staging and undo.
+ * The staging strip (SPEC 5.2 / 6.6): a staged delete is visible and
+ * recoverable, not one-frame-commit. It states the count, offers a text "Undo"
+ * affordance, and — when the caller supplies [onApply] — a commit affordance.
+ *
+ * Committing a staged delete is destructive, so the commit affordance is
+ * rendered through [DestructiveAction] (icon + destructive colour + label).
+ * A caller cannot obtain a text-only destructive surface here: the required
+ * signals are structural, not something the caller must remember to opt into.
+ * Presentation-only — the caller owns staging, undo and commit behaviour.
  */
 @Composable
 fun StagingStrip(
@@ -28,11 +34,11 @@ fun StagingStrip(
     onUndo: () -> Unit,
     modifier: Modifier = Modifier,
     onApply: (() -> Unit)? = null,
+    applyLabel: String = stringResource(R.string.action_apply),
 ) {
     val colors = SwipeDeleteTheme.colors
     val countText = stringResource(R.string.staging_strip_count, count)
     val undoLabel = stringResource(R.string.action_undo)
-    val applyLabel = stringResource(R.string.action_apply)
     Surface(
         modifier = modifier.fillMaxWidth(),
         color = colors.surfaceVariant,
@@ -57,15 +63,12 @@ fun StagingStrip(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 if (onApply != null) {
-                    TextButton(
+                    // Destructive commit: icon + text + destructive colour by
+                    // construction (SPEC 11.4), never a bare text button.
+                    DestructiveAction(
+                        text = applyLabel,
                         onClick = onApply,
-                        modifier = Modifier.defaultMinSize(
-                            minWidth = SwipeDeleteDimens.MinTouchTarget,
-                            minHeight = SwipeDeleteDimens.MinTouchTarget,
-                        ),
-                    ) {
-                        Text(text = applyLabel)
-                    }
+                    )
                 }
                 TextButton(
                     onClick = onUndo,

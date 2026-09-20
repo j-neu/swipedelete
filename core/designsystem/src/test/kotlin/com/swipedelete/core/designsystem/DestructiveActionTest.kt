@@ -10,11 +10,15 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.test.core.app.ApplicationProvider
 import com.swipedelete.core.designsystem.components.DestructiveAction
+import com.swipedelete.core.designsystem.components.requireIconContentDescription
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -79,6 +83,34 @@ class DestructiveActionTest {
         }
 
         composeRule.onNodeWithText("Delete").assertHasClickAction()
+    }
+
+    @Test
+    fun `the destructive action invokes its onClick when clicked`() {
+        var clicks = 0
+        composeRule.setContent {
+            SwipeDeleteTheme {
+                DestructiveAction(text = "Delete", onClick = { clicks++ })
+            }
+        }
+
+        composeRule.onNodeWithText("Delete").performClick()
+
+        assertEquals("the button-equivalent path must actually fire onClick", 1, clicks)
+    }
+
+    @Test
+    fun `a blank destructive icon content description is rejected`() {
+        // A blank description would silently demote the icon to decorative and
+        // leave colour as the sole destructive signal (SPEC 11.4).
+        val failure = assertThrows(IllegalArgumentException::class.java) {
+            requireIconContentDescription("")
+        }
+
+        assertTrue(
+            "the rejection must explain the icon is required, was: ${failure.message}",
+            failure.message.orEmpty().contains("non-empty"),
+        )
     }
 
     @Test

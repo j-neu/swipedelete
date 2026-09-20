@@ -12,6 +12,10 @@
     <string name="cd_destructive">Destructive action</string>
     <string name="cd_empty">Nothing here</string>
 
+    <!-- Distinguishes the otherwise-identical per-slot "Move" buttons for
+         TalkBack, and lets the non-drag affordance report its exact slot. -->
+    <string name="slot_move_to">Move to %1$s</string>
+
     <!-- Staging strip: "3 to delete" + an Undo affordance (SPEC 5.2). -->
     <string name="staging_strip_count">%1$d to delete</string>
 

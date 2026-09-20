@@ -19,6 +19,8 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.swipedelete.core.designsystem.R
 import com.swipedelete.core.designsystem.SwipeDeleteDimens
@@ -59,6 +61,7 @@ fun SlotDock(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             slots.forEach { slot ->
+                val moveToLabel = stringResource(R.string.slot_move_to, slot.name)
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = slot.name,
@@ -68,10 +71,12 @@ fun SlotDock(
                     TextButton(
                         onClick = { onSlotMove(slot) },
                         enabled = slot.enabled,
-                        modifier = Modifier.defaultMinSize(
-                            minWidth = SwipeDeleteDimens.MinTouchTarget,
-                            minHeight = SwipeDeleteDimens.MinTouchTarget,
-                        ),
+                        modifier = Modifier
+                            .defaultMinSize(
+                                minWidth = SwipeDeleteDimens.MinTouchTarget,
+                                minHeight = SwipeDeleteDimens.MinTouchTarget,
+                            )
+                            .semantics { contentDescription = moveToLabel },
                     ) {
                         Icon(
                             imageVector = SwipeDeleteIcons.Move,

@@ -25,7 +25,7 @@ fun EmptyState(
     modifier: Modifier = Modifier,
     title: String = stringResource(R.string.empty_state_default_title),
     body: String = stringResource(R.string.empty_state_default_body),
-    iconContentDescription: String? = null,
+    iconContentDescription: String = stringResource(R.string.cd_empty),
 ) {
     val colors = SwipeDeleteTheme.colors
     Column(

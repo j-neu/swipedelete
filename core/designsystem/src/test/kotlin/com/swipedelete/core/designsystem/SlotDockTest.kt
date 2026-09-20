@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ApplicationProvider
 import com.swipedelete.core.designsystem.components.SlotDock
 import com.swipedelete.core.designsystem.components.SlotSpec
@@ -58,5 +60,29 @@ class SlotDockTest {
                 node.config.contains(SemanticsActions.OnClick),
             )
         }
+    }
+
+    @Test
+    fun `the move affordance reports the exact slot it was invoked for`() {
+        val names = listOf("Screenshots", "Receipts", "Downloads", "Camera", "WhatsApp")
+        val slots = names.map { SlotSpec(name = it) }
+        var moved: SlotSpec? = null
+
+        composeRule.setContent {
+            SwipeDeleteTheme {
+                SlotDock(slots = slots, onSlotMove = { moved = it })
+            }
+        }
+
+        val target = "Downloads"
+        composeRule
+            .onNodeWithContentDescription(context.getString(R.string.slot_move_to, target))
+            .performClick()
+
+        assertEquals(
+            "the non-drag affordance must report the slot it was invoked for",
+            SlotSpec(name = target),
+            moved,
+        )
     }
 }
