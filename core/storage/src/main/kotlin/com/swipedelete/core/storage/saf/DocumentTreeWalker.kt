@@ -215,7 +215,10 @@ class DocumentTreeWalker(
         fun item(frame: Frame, meta: DocumentMetadata): MediaItem {
             val uri = SafUri.join(treeUri, frame.relativePath)
             return MediaItem(
-                id = ItemId("$sourceId/${frame.relativePath}"),
+                // `sourceId:relativePath`, matching `RawStorageGateway.itemFor` and
+                // the frozen `StorageGatewayContractTest` fixture (see
+                // `SafStorageGateway.itemAt` for why the separator matters).
+                id = ItemId("$sourceId:${frame.relativePath}"),
                 uri = uri,
                 path = uri,
                 relativePath = frame.relativePath,

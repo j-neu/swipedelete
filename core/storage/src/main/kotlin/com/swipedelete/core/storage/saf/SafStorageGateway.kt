@@ -327,7 +327,12 @@ class SafStorageGateway(
     ): MediaItem {
         val uri = SafUri.join(source.treeUri, relativePath)
         return MediaItem(
-            id = ItemId("${source.id.value}/$relativePath"),
+            // `sourceId:relativePath` — the same id namespace the raw gateway mints
+            // (`RawStorageGateway.itemFor`) and the frozen `StorageGatewayContractTest`
+            // fixture uses. M0-T17's device pass caught this gateway emitting
+            // `sourceId/relativePath`, which made the contract's post-cancel lookup
+            // fail even though the file was intact.
+            id = ItemId("${source.id.value}:$relativePath"),
             uri = uri,
             path = uri,
             relativePath = relativePath,
