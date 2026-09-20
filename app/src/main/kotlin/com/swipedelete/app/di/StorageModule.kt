@@ -29,10 +29,9 @@ const val DEFAULT_RETENTION_MILLIS: Long = 30L * 24 * 60 * 60 * 1000
  * The assembled safety spine: one concrete gateway, one quarantine store, and the
  * production decorator stack over them.
  *
- * This type exists so tests can assert the graph's shape (and so the app has one
- * named place to resolve the whole stack from); production code should depend on
- * [StorageGateway], [Reconciler] or [QuarantineStore] directly, never on
- * [StorageGraph].
+ * This type exists so [assembleStorageGraph] can return the whole assembly and so
+ * tests can assert its shape. It is deliberately **not** a Hilt binding: see
+ * [StorageGraphHandle] for why, and [StorageModule] for what is bound instead.
  */
 class StorageGraph internal constructor(
     /** The outermost gateway: every mutating call enters here. */
@@ -42,8 +41,11 @@ class StorageGraph internal constructor(
     val journal: JournalDao,
     /**
      * The one and only [QuarantineStore] in the graph. Its root is [quarantineRoot].
-     * Do not resolve this outside the graph: the Quarantine layer owns the store,
-     * and a second instance would mean a second quarantine root.
+     *
+     * Never bind this: the Quarantine layer owns the store, a second instance would
+     * mean a second quarantine root, and an injectable store lets a consumer call
+     * `store()`/`restore()`/`scan()` directly, bypassing the write-ahead journal
+     * (AC-1). Reach quarantine through [gateway] or [Reconciler] instead.
      */
     val quarantineStore: QuarantineStore,
     val quarantineRoot: File,
@@ -119,6 +121,34 @@ fun assembleStorageGraph(
     )
 }
 
+/**
+ * Provider-local hand-off between [StorageModule]'s providers.
+ *
+ * Hilt can only share one built dependency between two providers by binding
+ * something, and what must be shared here is a single [StorageGraph] so that the
+ * mutating [StorageGateway] and the [Reconciler] use the *same* [QuarantineStore]
+ * (one store, one quarantine root — carry-forward 1). Binding the graph itself
+ * would make it injectable, and so would binding the store.
+ *
+ * This handle is therefore the exchange type, and its surface is deliberately
+ * limited to the two entry points that are already legitimately injectable:
+ *
+ * - [gateway] — the outermost decorator, so every mutating call passes
+ *   `ProtectedRoots → Journaling → Quarantine` first;
+ * - [reconciler] — the startup pass, which owns its own per-row reasoning.
+ *
+ * It exposes neither [QuarantineStore] nor [StorageGraph]. Nothing can inject the
+ * store and call `store()`/`restore()`/`scan()` behind the write-ahead journal
+ * (AC-1), and nothing can reach the store through this type. Injecting the handle
+ * yields no capability that [StorageGateway] and [Reconciler] do not already
+ * provide individually.
+ */
+class StorageGraphHandle internal constructor(
+    /** The outermost decorator stack; the only sanctioned mutating entry point. */
+    val gateway: StorageGateway,
+    val reconciler: Reconciler,
+)
+
 @Module
 @InstallIn(SingletonComponent::class)
 object StorageModule {
@@ -148,9 +178,24 @@ object StorageModule {
         File(context.getExternalFilesDir(null) ?: context.filesDir, SafStorageGateway.QUARANTINE_DIR)
 
     /**
-     * The concrete, platform-backed gateway. `quarantineStore` is deliberately
-     * `null`: the Quarantine decorator owns the store (carry-forward 1), so a
-     * second root cannot exist.
+     * The concrete, platform-backed gateway: SAF, the tier-0/tier-1 default that
+     * always exists.
+     *
+     * `quarantineStore` is deliberately `null`: the Quarantine decorator owns the
+     * store (carry-forward 1), so a second root cannot exist.
+     *
+     * **Tier 2 (All Files Access) has no wired gateway yet.** Nothing here binds a
+     * `RawStorageGateway`, so this SAF gateway is the only concrete implementation
+     * in the graph and mutating calls made while All Files Access is granted still
+     * go through SAF. Raw access is not bindable at graph-construction time because
+     * it depends on a runtime permission *and* on per-volume root selection, both of
+     * which can change while the process lives; a `@Singleton` built here would
+     * freeze a stale permission state. `RawStorageGateway` (`:core:storage`, M0-T12)
+     * is therefore constructed on demand by the first feature that needs it, which
+     * is M1's `:feature:deck`/non-media work. Until then `TieredFeatureGate` may
+     * report `Tier.TIER_2` as *available*, but no Tier-2 code path exists to use —
+     * this note exists so that gap is discoverable from the module rather than only
+     * from a report.
      */
     @Provides
     @Singleton
@@ -170,36 +215,35 @@ object StorageModule {
 
     @Provides
     @Singleton
-    fun provideStorageGraph(
+    fun provideStorageGraphHandle(
         concrete: SafStorageGateway,
         journal: JournalDao,
         hasher: Hasher,
         clock: Clock,
         quarantineRoot: File,
         existenceProbe: ContentResolverExistenceProbe,
-    ): StorageGraph = assembleStorageGraph(
-        concrete = concrete,
-        journal = journal,
-        quarantineRoot = quarantineRoot,
-        hasher = hasher,
-        clock = clock,
-        exists = existenceProbe::exists,
-        // Revocation and unlocked protected roots are Task 25/M3 concerns: until
-        // then nothing is unlocked and no item is a source root.
-        unlocked = { emptySet() },
-    )
+    ): StorageGraphHandle {
+        val graph = assembleStorageGraph(
+            concrete = concrete,
+            journal = journal,
+            quarantineRoot = quarantineRoot,
+            hasher = hasher,
+            clock = clock,
+            exists = existenceProbe::exists,
+            // Revocation and unlocked protected roots are Task 25/M3 concerns: until
+            // then nothing is unlocked and no item is a source root.
+            unlocked = { emptySet() },
+        )
+        return StorageGraphHandle(gateway = graph.gateway, reconciler = graph.reconciler)
+    }
 
     @Provides
     @Singleton
-    fun provideStorageGateway(graph: StorageGraph): StorageGateway = graph.gateway
+    fun provideStorageGateway(handle: StorageGraphHandle): StorageGateway = handle.gateway
 
     @Provides
     @Singleton
-    fun provideReconciler(graph: StorageGraph): Reconciler = graph.reconciler
-
-    @Provides
-    @Singleton
-    fun provideQuarantineStore(graph: StorageGraph): QuarantineStore = graph.quarantineStore
+    fun provideReconciler(handle: StorageGraphHandle): Reconciler = handle.reconciler
 }
 
 private object WallClock : Clock {

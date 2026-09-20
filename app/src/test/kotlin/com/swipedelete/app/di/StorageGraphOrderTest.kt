@@ -18,14 +18,17 @@ import com.swipedelete.core.storage.JournalingStorageGateway
 import com.swipedelete.core.storage.ProtectedRootsStorageGateway
 import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.QuarantineStorageGateway
+import com.swipedelete.core.storage.Reconciler
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import dagger.Provides
 import java.io.File
 import java.io.InputStream
 import java.nio.file.Files
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertSame
@@ -146,6 +149,44 @@ class StorageGraphOrderTest {
         val productionRoot = StorageModule.provideQuarantineRoot(context)
         assertEquals("quarantine", productionRoot.name)
         assertEquals(context.getExternalFilesDir(null) ?: context.filesDir, productionRoot.parentFile)
+    }
+
+    /** 3b. The store and the graph must not be reachable through Hilt at all. */
+    @Test
+    fun `the quarantine store and the storage graph are not injectable`() {
+        val bindings = listOf(DatabaseModule, DispatchersModule, CapabilityModule, StorageModule)
+            .flatMap { module -> module::class.java.declaredMethods.toList() }
+            .filter { method -> method.isAnnotationPresent(Provides::class.java) }
+            .map { method -> method.returnType }
+
+        // Guard against a vacuous pass: the scan must really be reading the modules.
+        assertTrue(
+            StorageGateway::class.java in bindings && Reconciler::class.java in bindings,
+            "the module scan must find the real storage bindings, found=$bindings",
+        )
+
+        assertFalse(
+            QuarantineStore::class.java in bindings,
+            "QuarantineStore must not be a Hilt binding: an injectable store lets a consumer call " +
+                "store()/restore()/scan() directly and bypass the write-ahead journal (AC-1)",
+        )
+        assertFalse(
+            StorageGraph::class.java in bindings,
+            "StorageGraph must not be a Hilt binding: it exposes the quarantine store",
+        )
+
+        // The only thing shared between the gateway and reconciler providers is the
+        // provider-local handle, and its surface is exactly the two sanctioned
+        // entry points — never the store, never the graph.
+        val exposed = StorageGraphHandle::class.java.declaredMethods
+            .filter { method -> method.parameterCount == 0 && method.name.startsWith("get") }
+            .map { method -> method.returnType }
+            .toSet()
+        assertEquals(
+            setOf(StorageGateway::class.java, Reconciler::class.java),
+            exposed,
+            "the provider-local handle must expose only the gateway and the reconciler",
+        )
     }
 
     /** 4. Interrupted quarantine + startup reconciliation, end to end. */

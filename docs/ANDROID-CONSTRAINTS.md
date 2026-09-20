@@ -18,7 +18,7 @@
 | Kotlin (`org.jetbrains.kotlin.android`) | **2.4.20** (current stable; published 2026-09-07). | https://repo1.maven.org/maven2/org/jetbrains/kotlin/kotlin-stdlib/maven-metadata.xml and https://github.com/JetBrains/kotlin/releases/tag/v2.4.20 | 2026-09-19 |
 | Gradle (wrapper) | **9.7.1** (current stable, released 2026-08-19). | https://services.gradle.org/versions/current and https://docs.gradle.org/9.7.1/release-notes.html | 2026-09-19 |
 | Compose BOM (`androidx.compose:compose-bom`) | **2026.09.00** (newest stable; no prerelease in the BOM line). | https://dl.google.com/dl/android/maven2/androidx/compose/compose-bom/maven-metadata.xml and https://developer.android.com/develop/ui/compose/bom/bom-mapping | 2026-09-19 |
-| Hilt (`com.google.dagger:hilt-android`) | **2.60.1** (newest stable; `hilt-android-compiler` same version; published 2026-07-06). | https://repo1.maven.org/maven2/com/google/dagger/hilt-android/maven-metadata.xml and https://github.com/google/dagger/releases | 2026-09-19 |
+| Hilt (`com.google.dagger:hilt-android`) | **2.60.1** (newest stable; `hilt-android-compiler` same version; published 2026-07-06). **Superseded: the catalog pins 2.58 — 2.59+ requires AGP 9, see the V1 addendum.** | https://repo1.maven.org/maven2/com/google/dagger/hilt-android/maven-metadata.xml and https://github.com/google/dagger/releases | 2026-09-19 |
 | Room (`androidx.room:room-runtime` / `room-compiler` / `room-ktx`) | **2.8.5** (newest stable, 2026-09-09 release-note block). | https://dl.google.com/dl/android/maven2/androidx/room/room-runtime/maven-metadata.xml and https://developer.android.com/jetpack/androidx/releases/room | 2026-09-19 |
 | Media3 / ExoPlayer (`androidx.media3:media3-exoplayer`; same for `-ui`, `-session`, `-transformer`, `-common`) | **1.11.1** (newest stable; published 2026-09-11). | https://dl.google.com/dl/android/maven2/androidx/media3/media3-exoplayer/maven-metadata.xml and https://github.com/androidx/media/releases | 2026-09-19 |
 | Coil (`io.coil-kt.coil3:*`) | **3.6.3** (newest stable; published 2026-09-18). | https://repo1.maven.org/maven2/io/coil-kt/coil3/coil/maven-metadata.xml and https://github.com/coil-kt/coil/releases | 2026-09-19 |
@@ -60,7 +60,7 @@ These are not rows required by the brief, but Task 10 cannot write a working cat
 - **Kotlin 2.4.20** — Direct (Maven metadata `release=2.4.20`, GitHub non-prerelease release).
 - **Gradle 9.7.1** — Direct (`services.gradle.org/versions/current`, `final=true`).
 - **Compose BOM 2026.09.00** — Direct for the BOM version. The `ui=1.12.1` / `material3=1.4.0` mapping is **indirect** (read from the BOM's POM rather than a release note). The BOM's own `ui` line has newer `1.13.0-alpha03`, but the BOM intentionally pins the stable `1.12.1`.
-- **Hilt 2.60.1** — Direct (Maven metadata `release=2.60.1`, non-prerelease GitHub release).
+- **Hilt 2.60.1** — Direct (Maven metadata `release=2.60.1`, non-prerelease GitHub release). **Version superseded by the V1 addendum: the catalog pins 2.58** (2.59+ requires AGP 9, and this project is on AGP 8.13.2). The native-code finding recorded for `hilt-android` is unaffected — 2.58 ships no native code either.
 - **Room 2.8.5** — Direct for the version; the exact release date is **indirect** (the androidx release page groups patches under a "Version 2.8" block dated 2026-09-09; Maven `lastUpdated` is `20260909`).
 - **Media3 1.11.1** — Direct (Maven metadata `release=1.11.1`; GitHub tag `1.11.1`, published 2026-09-11). The androidx release page's newest dated block is "Version 1.11.0 — September 10, 2026", consistent with a 1.11.1 patch.
 - **Coil 3.6.3** — Direct (Maven metadata `release=3.6.3`; GitHub non-prerelease release 2026-09-18).
@@ -120,7 +120,7 @@ gradle      = 9.7.1          # G4: 9.7.0 is Kotlin 2.4.20's fully-supported max
 agp         = 9.4.1          # G4: 9.3.3 is the fully-supported alternative
 kotlin      = 2.4.20         # G5: KSP compatibility must be confirmed
 composeBom  = 2026.09.00
-hilt        = 2.60.1
+hilt        = 2.60.1         # superseded: catalog pins 2.58 (AGP 8.13.2 ceiling) — V1 addendum
 room        = 2.8.5
 media3      = 1.11.1
 coil        = 3.6.3
@@ -456,3 +456,20 @@ depend on it to compile against version 37 or later of the Android APIs.
 ```
 
 Because the controller fixed `compileSdk` at 36 (no `platforms;android-37.0` download), the catalog pins **Compose BOM 2026.06.01** — the newest BOM verified to stay at `minCompileSdk=35`. This is the first value to raise when the project later moves to `compileSdk 37`.
+
+### Fourth constraint surfaced by the build (Hilt 2.60.1's Gradle plugin requires AGP 9)
+
+**Task:** M0-T15 (Task 24) — the first task to apply the Hilt Gradle plugin. Corrects the §1 row, §3 confidence note and §5 pin above, which all record the then-newest stable **2.60.1**.
+**Date resolved:** 2026-09-20. **Method:** actual build output on this machine with AGP 8.13.2 (not a compatibility table).
+
+**The catalog now pins `hilt = 2.58`.** Dagger 2.59 made AGP 9 a hard requirement for the Hilt Gradle plugin: the 2.59 release notes state *"This release adds AGP 9 support for the Hilt Gradle plugin. This means that if you use the Hilt Gradle Plugin, AGP 9 is now a requirement"*, and Dagger 2.59.1 added *"Updated minimum required AGP version to 9.0.0 to make it clearer this is a requirement when using the Hilt Gradle plugin."* Applying 2.60.1 to this project fails during configuration:
+
+```
+An exception occurred applying plugin request [id: 'com.google.dagger.hilt.android', version: '2.60.1']
+> Failed to apply plugin 'com.google.dagger.hilt.android'.
+   > The Hilt Android Gradle plugin is only compatible with Android Gradle plugin (AGP) version 9.0.0 or higher (found Android Gradle Plugin version 8.13.2).
+```
+
+Dagger 2.58 is the last release before that requirement (2.58's own release notes say AGP 9 support "was held back from this release ... because it forces users onto AGP 9"), so **2.58 is the newest Hilt whose Gradle plugin applies to AGP 8.13.2**. The single `hilt` version reference in `gradle/libs.versions.toml` covers the plugin, `hilt-android` and `hilt-android-compiler` together.
+
+This is consistent with the G4 decision above: the project keeps AGP 8.13.2 (and `org.jetbrains.kotlin.android`) rather than moving to AGP 9's built-in-Kotlin DSL, so Hilt is capped rather than the toolchain. Priority applied: **a green build over a newer version string.** Moving to AGP 9 is what raises this pin back to the newest Hilt; the same AGP-9 requirement will hit every later Hilt-consuming task, so any Hilt upgrade must be paired with the AGP 9 migration.

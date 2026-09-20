@@ -26,5 +26,6 @@ object DatabaseModule {
         Room.databaseBuilder(context, SwipeDeleteDatabase::class.java, "swipedelete.db").build()
 
     @Provides
+    @Singleton
     fun provideJournalDao(database: SwipeDeleteDatabase): JournalDao = database.journalDao()
 }
