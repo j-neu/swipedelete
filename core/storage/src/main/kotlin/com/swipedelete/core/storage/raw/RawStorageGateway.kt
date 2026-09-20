@@ -15,6 +15,7 @@ import com.swipedelete.core.storage.ChangeEvent
 import com.swipedelete.core.storage.DeleteResult
 import com.swipedelete.core.storage.Destination
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.ItemLocator
 import com.swipedelete.core.storage.Metadata
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.Page
@@ -168,7 +169,7 @@ class RawStorageGateway(
     private val maxDepth: Int = DEFAULT_MAX_DEPTH,
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
     private val readBytes: (File) -> ByteArray? = RawMediaPolicy::readLeadingBytes,
-) : StorageGateway {
+) : StorageGateway, ItemLocator {
 
     private val canonicalRoots: List<File>
     private val sourceRefs: List<SourceRef>
@@ -406,6 +407,12 @@ class RawStorageGateway(
 
     /** Raw paths offer no change notifications; a watch yields nothing. */
     override fun watch(source: SourceRef): Flow<ChangeEvent> = emptyFlow()
+
+    /**
+     * [ItemLocator]: a raw item's `uri`/`path` is the real absolute filesystem
+     * path the gateway addresses it by, so existence is [File.exists].
+     */
+    override suspend fun exists(uri: String): Boolean = uri.isNotBlank() && File(uri).exists()
 
     // --- Added capability (not part of the frozen StorageGateway) ---
 

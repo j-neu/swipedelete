@@ -22,6 +22,8 @@ import com.swipedelete.core.storage.Reconciler
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import com.swipedelete.core.storage.saf.SafStorageGateway
+import dagger.Binds
 import dagger.Provides
 import java.io.File
 import java.io.InputStream
@@ -117,12 +119,24 @@ class StorageGraphOrderTest {
     /** 3. One quarantine store, owned by the Quarantine layer; the concrete gateway holds none. */
     @Test
     fun `the graph contains exactly one quarantine store and the concrete gateways hold none`() {
-        // The same provider the Hilt graph uses, so this cannot drift from
-        // production wiring: one persisted-grant store (M0-T16).
-        val concrete = StorageModule.provideConcreteGateway(
+        // The production provider itself, so this cannot drift from shipped
+        // wiring: the concrete gateway is constructed *inside* it and never bound
+        // (finding 1). The provider only hands back the decorated gateway and the
+        // reconciler, so the concrete is reached by walking the decorator stack.
+        val handle = StorageModule.provideStorageGraphHandle(
             context = context,
             persisted = StorageModule.provideGrantStore(context),
+            journal = RecordingJournal(mutableListOf()),
+            hasher = Sha256Hasher(),
+            clock = FixedClock(NOW),
+            quarantineRoot = quarantineRoot,
         )
+
+        // The decorator stack is exactly ProtectedRoots -> Journaling -> Quarantine -> concrete.
+        val protectedRoots = handle.gateway as ProtectedRootsStorageGateway
+        val journaling = field(protectedRoots, "delegate") as JournalingStorageGateway
+        val quarantineLayer = field(journaling, "delegate") as QuarantineStorageGateway
+        val concrete = field(quarantineLayer, "delegate") as SafStorageGateway
 
         // The concrete gateway must not own a second quarantine root: its store is
         // null, which is also observable as an explicit not-configured refusal.
@@ -131,20 +145,11 @@ class StorageGraphOrderTest {
             "SafStorageGateway must be constructed with quarantineStore = null; the Quarantine layer owns the store",
         )
 
-        val graph = graph(concrete, RecordingJournal(mutableListOf()), exists = { false })
-        // The decorator stack is exactly ProtectedRoots -> Journaling -> Quarantine -> concrete.
-        val protectedRoots = graph.gateway as ProtectedRootsStorageGateway
-        val journaling = field(protectedRoots, "delegate") as JournalingStorageGateway
-        val quarantineLayer = field(journaling, "delegate") as QuarantineStorageGateway
-        assertSame(concrete, field(quarantineLayer, "delegate"), "the innermost layer must be the concrete gateway")
-
         // The decorator and the reconciler share the one store instance and its root.
         val decoratorStore = field(quarantineLayer, "store") as QuarantineStore
-        val reconcilerStore = field(graph.reconciler, "quarantine") as QuarantineStore
-        assertSame(graph.quarantineStore, decoratorStore, "the Quarantine decorator must use the graph's store")
-        assertSame(graph.quarantineStore, reconcilerStore, "the Reconciler must use the graph's store")
-        assertEquals(quarantineRoot.absolutePath, graph.quarantineStore.rootPath().absolutePath)
-        assertEquals(quarantineRoot.absolutePath, graph.quarantineRoot.absolutePath)
+        val reconcilerStore = field(handle.reconciler, "quarantine") as QuarantineStore
+        assertSame(decoratorStore, reconcilerStore, "the Reconciler must use the graph's store")
+        assertEquals(quarantineRoot.absolutePath, decoratorStore.rootPath().absolutePath)
 
         // The production root is the app's external quarantine directory, so
         // ProtectedRootKind.INTERNAL is active for the directory the app writes into.
@@ -153,13 +158,17 @@ class StorageGraphOrderTest {
         assertEquals(context.getExternalFilesDir(null) ?: context.filesDir, productionRoot.parentFile)
     }
 
-    /** 3b. The store and the graph must not be reachable through Hilt at all. */
+    /** 3b. The store, the graph and every concrete gateway must not be reachable through Hilt. */
     @Test
-    fun `the quarantine store and the storage graph are not injectable`() {
-        val bindings = listOf(DatabaseModule, DispatchersModule, CapabilityModule, StorageModule)
-            .flatMap { module -> module::class.java.declaredMethods.toList() }
-            .filter { method -> method.isAnnotationPresent(Provides::class.java) }
-            .map { method -> method.returnType }
+    fun `the quarantine store, the storage graph and concrete gateways are not injectable`() {
+        val modules = listOf(DatabaseModule, DispatchersModule, CapabilityModule, StorageModule)
+        val bindingMethods = modules.flatMap { module ->
+            module::class.java.declaredMethods.toList()
+                .filter { method ->
+                    method.isAnnotationPresent(Provides::class.java) || method.isAnnotationPresent(Binds::class.java)
+                }
+        }
+        val bindings = bindingMethods.map { method -> method.returnType }
 
         // Guard against a vacuous pass: the scan must really be reading the modules.
         assertTrue(
@@ -177,9 +186,27 @@ class StorageGraphOrderTest {
             "StorageGraph must not be a Hilt binding: it exposes the quarantine store",
         )
 
+        // Finding 1, generalised to @Binds: no concrete StorageGateway
+        // implementation may be a Dagger binding *or* a module-method dependency.
+        // A @Binds method's return type is usually the interface, but its
+        // parameter type can be the concrete implementation, so both are scanned.
+        val concreteStorageTypes = bindingMethods
+            .flatMap { method -> listOf(method.returnType) + method.parameterTypes.toList() }
+            .filter { type ->
+                StorageGateway::class.java.isAssignableFrom(type) &&
+                    !type.isInterface &&
+                    !java.lang.reflect.Modifier.isAbstract(type.modifiers)
+            }
+            .toSet()
+        assertTrue(
+            concreteStorageTypes.isEmpty(),
+            "no concrete StorageGateway implementation may be a Hilt binding or dependency, " +
+                "found=$concreteStorageTypes — binding one reopens the AC-1/AC-7 bypass",
+        )
+
         // The only thing shared between the gateway and reconciler providers is the
         // provider-local handle, and its surface is exactly the two sanctioned
-        // entry points — never the store, never the graph.
+        // entry points — never the store, never the graph, never a concrete gateway.
         val exposed = StorageGraphHandle::class.java.declaredMethods
             .filter { method -> method.parameterCount == 0 && method.name.startsWith("get") }
             .map { method -> method.returnType }

@@ -12,6 +12,7 @@ import com.swipedelete.core.storage.ChangeEvent
 import com.swipedelete.core.storage.DeleteResult
 import com.swipedelete.core.storage.Destination
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.ItemLocator
 import com.swipedelete.core.storage.Metadata
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.Page
@@ -70,7 +71,7 @@ class SafStorageGateway(
     private val access: DocumentTreeAccess = SafDocumentsContractAccess(context),
     private val walker: DocumentTreeWalker = DocumentTreeWalker(access),
     private val quarantineStore: QuarantineStore? = null,
-) : StorageGateway {
+) : StorageGateway, ItemLocator {
 
     /**
      * The volume [capacity] reports on. The quarantine root belongs to the
@@ -274,6 +275,24 @@ class SafStorageGateway(
 
     /** SAF trees offer no change notifications at Tier 0; a watch yields nothing. */
     override fun watch(source: SourceRef): Flow<ChangeEvent> = emptyFlow()
+
+    /**
+     * [ItemLocator]: resolve the synthetic tree URI a SAF item carries
+     * (`"${treeUri}/${relativePath}"`) to a document under a grant the app still
+     * holds. A URI naming a tree that is no longer persisted (a revoked grant)
+     * resolves to `false`, which reconciliation reports as `unknown` rather than
+     * guessing. Never throws: an unknown source, an unreadable parent or a
+     * vanished document is simply absent.
+     */
+    override suspend fun exists(uri: String): Boolean {
+        if (uri.isBlank()) return false
+        val source = persisted.sources().firstOrNull {
+            uri == it.treeUri || uri.startsWith("${it.treeUri.trimEnd('/')}/")
+        } ?: return false
+        val relative = SafUri.relativePath(source.treeUri, uri)
+        if (relative.isBlank()) return false
+        return resolveNode(source, relative) != null
+    }
 
     // --- Internals ---
 

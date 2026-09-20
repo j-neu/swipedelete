@@ -69,7 +69,8 @@ class StorageGraph internal constructor(
  *
  * 1. **Exactly one [QuarantineStore].** It is created once, is the store the
  *    Quarantine decorator and the [Reconciler] both receive, and `concrete` is
- *    constructed with `quarantineStore = null` (see [StorageModule.provideConcreteGateway]).
+ *    constructed with `quarantineStore = null` inside
+ *    [StorageModule.provideStorageGraphHandle].
  *    A concrete gateway that owned its own store would have a second root.
  * 2. **[ProtectedRootsStorageGateway] is outermost and gets a non-null
  *    [quarantineRoot].** Without it `ProtectedRootKind.INTERNAL` is never active
@@ -207,8 +208,13 @@ object StorageModule {
         File(context.getExternalFilesDir(null) ?: context.filesDir, SafStorageGateway.QUARANTINE_DIR)
 
     /**
-     * The concrete, platform-backed gateway: SAF, the tier-0/tier-1 default that
-     * always exists.
+     * The **only** injectable storage type: the outermost decorator stack. The
+     * concrete, platform-backed gateway is constructed *inside* this provider and
+     * never bound (finding 1): binding `SafStorageGateway` (or any other concrete
+     * implementation) would let a future `@Inject constructor(gateway:
+     * SafStorageGateway)` call `move`/`deletePermanently`/`metadata`/`openStream`/
+     * `enumerate` with no protected-roots filter and no journal row — the exact
+     * AC-1/AC-7 bypass the Task 24 fix removed for `QuarantineStore`/`StorageGraph`.
      *
      * `quarantineStore` is deliberately `null`: the Quarantine decorator owns the
      * store (carry-forward 1), so a second root cannot exist.
@@ -228,37 +234,32 @@ object StorageModule {
      */
     @Provides
     @Singleton
-    fun provideConcreteGateway(
+    fun provideStorageGraphHandle(
         @ApplicationContext context: Context,
         persisted: PersistedGrantStore,
-    ): SafStorageGateway = SafStorageGateway(
-        context = context,
-        persisted = persisted,
-        quarantineStore = null,
-    )
-
-    @Provides
-    @Singleton
-    fun provideExistenceProbe(@ApplicationContext context: Context): ContentResolverExistenceProbe =
-        ContentResolverExistenceProbe(context)
-
-    @Provides
-    @Singleton
-    fun provideStorageGraphHandle(
-        concrete: SafStorageGateway,
         journal: JournalDao,
         hasher: Hasher,
         clock: Clock,
         quarantineRoot: File,
-        existenceProbe: ContentResolverExistenceProbe,
     ): StorageGraphHandle {
+        // Constructed here, not bound: the only injectable storage type is the
+        // decorated gateway the handle exposes (finding 1).
+        val concrete = SafStorageGateway(
+            context = context,
+            persisted = persisted,
+            quarantineStore = null,
+        )
         val graph = assembleStorageGraph(
             concrete = concrete,
             journal = journal,
             quarantineRoot = quarantineRoot,
             hasher = hasher,
             clock = clock,
-            exists = existenceProbe::exists,
+            // Finding 4: reconciliation asks the *concrete gateway* whether the
+            // item it wrote into the journal still exists. A SAF item's uri is a
+            // synthetic display string, not a resolvable document URI, so the
+            // old `content://`-shape probe reported present files as absent.
+            exists = concrete::exists,
             // Revocation and unlocked protected roots are Task 25/M3 concerns: until
             // then nothing is unlocked and no item is a source root.
             unlocked = { emptySet() },
