@@ -61,6 +61,10 @@ class SwipeDeleteApplicationTest {
             application.recoveryReport.value,
             "onCreate must not block until the report is ready",
         )
+        assertFalse(
+            application.recoveryReady.value,
+            "storage must not be reported ready to mutate before reconciliation completes (finding 5)",
+        )
 
         journal.release()
         Harness.scheduler.advanceUntilIdle()
@@ -68,6 +72,10 @@ class SwipeDeleteApplicationTest {
         assertEquals(
             RecoveryReport(resolved = emptyList(), unknown = emptyList()),
             application.recoveryReport.value,
+        )
+        assertTrue(
+            application.recoveryReady.value,
+            "readiness must be published once reconciliation completes (finding 5)",
         )
         assertTrue(journal.finished, "the launched reconciliation must run to completion")
     }

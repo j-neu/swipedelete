@@ -31,6 +31,17 @@ open class SwipeDeleteApplication : Application() {
     val recoveryReport: StateFlow<RecoveryReport?>
         get() = recoveryCoordinator().report
 
+    /**
+     * `false` until startup reconciliation has completed.
+     *
+     * M1's deck must not mutate storage while this is `false`; it must call
+     * `RecoveryCoordinator.awaitReady()` (injected) before any destructive action
+     * (finding 5). This property exists so an Activity/Compose layer can also gate
+     * its affordances on the same signal.
+     */
+    val recoveryReady: StateFlow<Boolean>
+        get() = recoveryCoordinator().ready
+
     override fun onCreate() {
         super.onCreate()
         recoveryCoordinator().start()
