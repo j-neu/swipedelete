@@ -50,6 +50,13 @@ android {
     }
 }
 
+// AppManifestTest reads the *merged* manifest to guard AC-6 (a dependency must
+// not inject INTERNET), so the unit-test task must depend on its producer.
+// `matching`/`configureEach` is used because AGP registers unit-test tasks lazily.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn("processDebugMainManifest")
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)

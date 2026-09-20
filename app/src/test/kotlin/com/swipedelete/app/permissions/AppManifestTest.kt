@@ -86,6 +86,19 @@ class AppManifestTest {
         )
     }
 
+    @Test
+    fun `the merged manifest declares no INTERNET permission`() {
+        // AC-6 regression the source-only checks above cannot see: a dependency's
+        // manifest can inject `<uses-permission android:name=".INTERNET"/>` into
+        // the merged artifact without touching either source manifest. This reads
+        // the real merge output (produced by :app:processDebugMainManifest).
+        val merged = parse(manifest(MERGED_MAIN_MANIFEST))
+        assertFalse(
+            permissionNames(merged).any { it.contains("INTERNET") },
+            "AC-6: no dependency may inject INTERNET into the merged manifest",
+        )
+    }
+
     /** An element tree with namespace declarations excluded and attributes keyed by namespace. */
     private data class XmlNode(
         val name: String,
@@ -157,5 +170,9 @@ class AppManifestTest {
     private companion object {
         const val ANDROID_NS = "http://schemas.android.com/apk/res/android"
         const val XMLNS_NS = "http://www.w3.org/2000/xmlns/"
+
+        /** Output of `:app:processDebugMainManifest`; the real merged artifact. */
+        const val MERGED_MAIN_MANIFEST =
+            "app/build/intermediates/merged_manifest/debug/processDebugMainManifest/AndroidManifest.xml"
     }
 }

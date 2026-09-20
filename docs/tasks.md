@@ -47,7 +47,7 @@ The spec leaves these open. Each has a recommendation; the plan adopts the recom
 
 Copied from the spec; every task's requirements implicitly include these.
 
-1. `minSdk 26`, `targetSdk 36`, `compileSdk 37`. **[VERIFY — V1]**. Kotlin 2.x, AGP and 16 KB page-size requirement verified at implementation time.
+1. `minSdk 26`, `targetSdk 36`, `compileSdk 36`. Kotlin 2.x, AGP and 16 KB page-size requirement verified at implementation time. (`compileSdk` is deliberately pinned to **36**, not 37: the resolved catalog in `gradle/libs.versions.toml` is AGP 8.13.2, whose maximum supported API is 36.1, and Compose BOM 2026.06.01 requires `minCompileSdk 35`; a 37 pin is not buildable on this toolchain.)
 2. **No `INTERNET` permission in any build** (AC-6). No network stack linked, no analytics, no telemetry, no ads, no identifiers, no remote crash reporting (§11.3).
 3. **One APK, one Play listing**, capability tiers 0/1/2, plus a `-PnoAllFilesAccess` contingency build that strips Tier 2 (AC-19).
 4. **Media always goes through `MediaStore`.** All Files Access is used only for *non-media* file management. A file with a media MIME type or media extension can never be classified into a non-media category (AC-10, §4.2 condition 2).

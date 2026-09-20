@@ -69,3 +69,87 @@ Host unit tests after the fixes: `:core:storage` 83, `:feature:settings` 15, `:a
    JUnit rejected the class ("Method … should be void"). Made explicitly `runBlocking<Unit>`.
 
 Full detail, commands, RED states and evidence: `../.superpowers/sdd/tasks/task-26-report.md`.
+
+## Whole-branch review fix wave (2026-09-20)
+
+The final whole-branch review returned **0 Critical and 8 Important** findings; all
+eight were fixed on this branch before the M1 hand-off. The findings that change
+this *acceptance record* (rather than only code/tests/CI) are recorded here. Full
+per-finding evidence: `../.superpowers/sdd/tasks/final-fix-report.md`.
+
+### Finding 1 — corrected M1 carry-forward: scan progress must not rely on `enumerateDetailed`
+
+The Task 20 parked carry-forward ("M1 will surface the walker's truncation flag via
+`SafStorageGateway.enumerateDetailed`") is **wrong as written**. The fix wave made
+the concrete `SafStorageGateway` non-injectable — the only injectable storage type
+is the decorated `StorageGateway`, enforced by the generalised reflective scan in
+`app/src/test/.../di/StorageGraphOrderTest.kt` — so `enumerateDetailed`, like every
+other gateway-only capability, is no longer reachable by any consumer.
+
+**Corrected carry-forward (M1 owns it):** M1 must either thread scan
+progress/truncation through the frozen storage port or add an explicit
+progress/enumeration port on the assembled graph. No such port is invented in M0.
+
+### Finding 5 — recovery readiness gates M1 mutation
+
+`RecoveryCoordinator` now publishes `StateFlow<Boolean> ready` and a documented
+`suspend fun awaitReady(): RecoveryReport` guard (re-exposed as
+`SwipeDeleteApplication.recoveryReady`). **M1's deck must not perform any
+destructive action (delete, quarantine, move, restore) before reconciliation has
+completed:** it must consult `awaitReady()` first. The guard returns only once the
+report exists; if reconciliation fails, readiness stays `false` and mutation is
+blocked (the safe direction).
+
+### Finding 6 — AC-1 durability now empirically exercised against real Room
+
+The 22-stop-point kill sweep now also runs over a **real Room database**
+(`core/storage/src/test/.../ChaosRoomReconciliationTest.kt`, reusing the same
+`ChaosEnv` harness), so every `PENDING` insert and terminal mark is a committed
+SQLite write, not an in-memory list write. The four invariants (no loss, no limbo,
+honest reconciliation, nothing destroyed) hold over the durable path.
+
+**Still open:** an **OS-level** process kill (`am force-stop` / `kill -9`) is still
+not exercised on a device. The on-device AC-5 test abandons a coroutine at a real
+I/O boundary instead (see "What AC-5 does and does not prove" above). This remains
+a documented gap.
+
+### Finding 7 — which AC-17 leg is proven for SAF
+
+The frozen contract's `restoreRefusesToOverwriteAndReportsConflict` uses a
+synthetic non-absolute `originalPath`, so on SAF it exercises the store's
+documented **pathless** refusal (`no_raw_original_path`) — a genuine refusal, but
+**not** the occupancy branch its name suggests. The record is now explicit:
+
+- **Pathless leg (host):** proven in
+  `core/storage/src/test/.../quarantine/QuarantineRestoreTest.kt`
+  (`restore of a SAF-shaped synthetic original path is the documented pathless refusal`).
+- **Occupancy leg (device):** proven in
+  `SafStorageGatewayInstrumentedTest.restoreRefusesAnOccupiedAbsoluteOriginalPath`,
+  which gives the item a real absolute original path so restore reaches the
+  occupancy check. Device pass: **5/5** on `emulator-5554`, API 36 (the four frozen
+  contract tests plus this leg).
+
+### Finding 8 — accepted, owned gap: the API 26/30/33 device legs
+
+`docs/tasks.md` required PASS on API 26, 30, 33 and 36; only **API 36** ran (the
+API 26/30 system images were unavailable, per the shortfall note above). This is an
+**accepted scope reduction**, owned — not an oversight:
+
+- **Owner:** the device/CI matrix task (the first task that owns multi-API
+  instrumentation in the M1+ plan).
+- **Why it matters:** the V2 20-grant durability check and the re-hash/rename
+  behaviours are API-band-sensitive, so the missing legs are exactly the ones that
+  could regress there.
+- **Not a waiver:** no multi-API claim is made; API 26/30/33 remain unverified
+  until that owner runs them.
+
+### Also fixed in the wave (no acceptance-record change)
+
+- **Finding 2:** CI now runs the unqualified `testDebugUnitTest` (all modules, not
+  only `:app`) and installs platform `android-36` + build-tools explicitly.
+- **Finding 3:** an unlistable directory inside a raw delete subtree is treated as
+  media-bearing (AC-10), so it is refused rather than `deleteRecursively()`d.
+- **Finding 4:** reconciliation resolves identity through a new `ItemLocator` on
+  each concrete gateway instead of the `content://`-shape probe (which reported
+  present SAF files as absent).
+
