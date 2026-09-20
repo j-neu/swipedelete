@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Action labels. Every destructive affordance pairs its icon with one of
+         these; the CI lint rule in M3-T11 enforces AC-11 across modules. -->
+    <string name="action_delete">Delete</string>
+    <string name="action_move">Move</string>
+    <string name="action_undo">Undo</string>
+    <string name="action_apply">Apply</string>
+    <string name="action_continue">Continue</string>
+
+    <!-- Content descriptions. The destructive icon must never be colour-only. -->
+    <string name="cd_destructive">Destructive action</string>
+    <string name="cd_empty">Nothing here</string>
+
+    <!-- Staging strip: "3 to delete" + an Undo affordance (SPEC 5.2). -->
+    <string name="staging_strip_count">%1$d to delete</string>
+
+    <!-- Empty state defaults. -->
+    <string name="empty_state_default_title">Nothing to review</string>
+    <string name="empty_state_default_body">Items you keep or delete will be counted here.</string>
+</resources>
