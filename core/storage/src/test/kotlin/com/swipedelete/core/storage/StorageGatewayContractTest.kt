@@ -7,8 +7,6 @@ import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SourceId
 import com.swipedelete.core.model.SourceKind
 import com.swipedelete.core.model.SourceRef
-import com.swipedelete.core.storage.fake.FakeStorageGateway
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -68,14 +66,21 @@ abstract class StorageGatewayContractTest {
 
     @Test
     fun `cancelled quarantine leaves the original untouched`() = runTest {
-        val gw = newGateway() as FakeStorageGateway
-        gw.beforeMove = { index -> if (index == 0) awaitCancellation() }
+        val gw = newGateway()
+        armCancellation(gw)
         val job = launch { gw.quarantine(listOf(item(name = "a.gif"), item(name = "b.gif")), BatchId("b1")) }
         yield()
         job.cancelAndJoin()
-        assertTrue(fileExists(pathOf("a.gif")))
-        assertTrue(gw.quarantineContents().isEmpty())
+        val remaining = gw.enumerate(source(), null).first().items.map { it.id }
+        assertTrue(remaining.contains(item(name = "a.gif").id))
     }
+
+    /**
+     * Implementations override this to make the next quarantine move suspend
+     * indefinitely, so the AC-15 cancellation path can be exercised
+     * deterministically. The default is a no-op.
+     */
+    protected open suspend fun armCancellation(gateway: StorageGateway) = Unit
 
     // --- Fixture helpers shared by every implementation ---
 

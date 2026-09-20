@@ -253,8 +253,11 @@ class FakeStorageGateway(
             ?.let { "${destination.source.treeUri}/$it" }
             ?: destination.source.treeUri
         val name = from.substringAfterLast('/')
-        val collision = files.containsKey("$directory/$name")
-        val target = if (collision) freePath(directory, name) else "$directory/$name"
+        val direct = "$directory/$name"
+        // Moving an item into the directory it already occupies is a no-op, not a collision.
+        if (direct == from) return MoveResult.Moved(item)
+        val collision = files.containsKey(direct)
+        val target = if (collision) freePath(directory, name) else direct
         val moved = item.copy(uri = target, path = target, sourceId = destination.source.id)
         files.remove(from)
         files[target] = moved
@@ -293,8 +296,12 @@ class FakeStorageGateway(
 
     /** First free `name`, `name (1)`, `name (2)`, ... in [directory]. */
     private fun freePath(directory: String, name: String): String {
-        val base = name.substringBeforeLast('.', name)
-        val extension = if (name.contains('.')) ".${name.substringAfterLast('.')}" else ""
+        // A dotfile (".hidden") has no extension: suffix the whole name so the
+        // result stays a dotfile (".hidden (1)") instead of " (1).hidden".
+        val dot = name.lastIndexOf('.')
+        val hasExtension = dot > 0
+        val base = if (hasExtension) name.substring(0, dot) else name
+        val extension = if (hasExtension) name.substring(dot) else ""
         var candidate = "$directory/$name"
         var counter = 1
         while (files.containsKey(candidate)) {
