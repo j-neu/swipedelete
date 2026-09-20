@@ -1,11 +1,15 @@
 package com.swipedelete.core.storage.saf
 
+import android.content.Context
+import android.content.pm.ProviderInfo
 import android.database.Cursor
 import android.database.MatrixCursor
 import android.os.CancellationSignal
 import android.os.ParcelFileDescriptor
+import android.os.Process
 import android.provider.DocumentsContract
 import android.provider.DocumentsProvider
+import androidx.test.core.app.ApplicationProvider
 import java.io.File
 import java.io.FileNotFoundException
 
@@ -17,6 +21,14 @@ import java.io.FileNotFoundException
  * through the genuine `DocumentsContract` / `ContentResolver` path. Two roots —
  * [PRIMARY] and [EXPORT] — back onto `cacheDir/saf-tree/<root>`, so a test can
  * also create and inspect files directly on the filesystem.
+ *
+ * **Wiring is single-sourced** so the test and the provider cannot disagree:
+ * - the authority suffix is [TestDocumentsContract.AUTHORITY_SUFFIX], which the
+ *   androidTest manifest declares and [resolveAuthority] searches for;
+ * - the backing directory is [baseDir], computed from the *instrumentation
+ *   target* application's `cacheDir` (via `ApplicationProvider`) by both the
+ *   provider and the test, so they resolve to the same path even if the provider
+ *   and test APK packages differ.
  *
  * Document ids are tree-relative paths: `"primary"` is the root and
  * `"primary/sub/a.gif"` a nested file.
@@ -101,8 +113,6 @@ class TestDocumentsProvider : DocumentsProvider() {
 
     // --- Internals ---
 
-    private fun baseDir(): File = File(requireContext().cacheDir, "saf-tree")
-
     private fun fileFor(documentId: String): File? {
         val parts = documentId.split('/').filter { it.isNotEmpty() }
         val root = parts.firstOrNull() ?: return null
@@ -164,8 +174,34 @@ class TestDocumentsProvider : DocumentsProvider() {
             DocumentsContract.Document.COLUMN_FLAGS,
         )
 
-        /** The directory backing [root] (`cacheDir/saf-tree/<root>`). */
-        fun rootDir(context: android.content.Context, root: String): File =
-            File(File(context.cacheDir, "saf-tree"), root)
+        /**
+         * The **one** backing directory, pinned to the instrumentation target
+         * application's `cacheDir` so the provider (which may run in the test
+         * APK's package) and the test body always resolve the same path.
+         */
+        fun baseDir(): File =
+            File(ApplicationProvider.getApplicationContext<Context>().cacheDir, "saf-tree")
+
+        /** The directory backing [root] (`baseDir()/<root>`). */
+        fun rootDir(root: String): File = File(baseDir(), root)
+
+        /**
+         * The authority of the provider this test APK installs, resolved at
+         * runtime from the installed providers rather than reconstructed from a
+         * package name — the manifest and this lookup then cannot disagree about
+         * `<applicationId>`.
+         */
+        fun resolveAuthority(context: Context): String {
+            val providers: List<ProviderInfo> = context.packageManager
+                .queryContentProviders(null, Process.myUid(), 0)
+            return providers
+                .mapNotNull { it.authority }
+                .firstOrNull { it.endsWith(TestDocumentsContract.AUTHORITY_SUFFIX) }
+                ?: error(
+                    "no provider with authority suffix " +
+                        "'${TestDocumentsContract.AUTHORITY_SUFFIX}' is installed for " +
+                        context.packageName,
+                )
+        }
     }
 }

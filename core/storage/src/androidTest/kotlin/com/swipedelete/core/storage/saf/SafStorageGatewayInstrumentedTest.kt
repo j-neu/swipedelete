@@ -4,14 +4,18 @@ import android.content.Context
 import android.provider.DocumentsContract
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.swipedelete.core.common.Clock
+import com.swipedelete.core.common.Sha256Hasher
 import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SourceId
 import com.swipedelete.core.model.SourceKind
 import com.swipedelete.core.model.SourceRef
 import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.QuarantineStorageGateway
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.StorageGatewayContractTest
+import com.swipedelete.core.storage.quarantine.QuarantineStore
 import kotlinx.coroutines.CancellationException
 import org.junit.runner.RunWith
 import java.io.File
@@ -36,7 +40,14 @@ import java.io.OutputStream
 class SafStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
 
     private val context: Context = ApplicationProvider.getApplicationContext()
-    private val authority: String = "${context.packageName}.documents"
+
+    /**
+     * Resolved at runtime from the installed provider, never rebuilt from a
+     * package name, so it cannot disagree with the androidTest manifest's
+     * `<applicationId>[AUTHORITY_SUFFIX]` declaration. The host-side
+     * `SafAndroidTestWiringTest` checks that declaration.
+     */
+    private val authority: String = TestDocumentsProvider.resolveAuthority(context)
     private val primaryTree: String =
         DocumentsContract.buildTreeDocumentUri(authority, TestDocumentsProvider.PRIMARY).toString()
     private val exportTree: String =
@@ -74,12 +85,24 @@ class SafStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
             toRootId = TestDocumentsProvider.PRIMARY,
         )
         remapped = access
-        return SafStorageGateway(
+
+        // The concrete gateway does not own a quarantine root (Task 20 fix):
+        // the store is supplied, exactly as the production
+        // `ProtectedRoots → Journaling → Quarantine → Concrete` stack does.
+        val concrete = SafStorageGateway(
             context = context,
             persisted = grants,
             access = access,
-            quarantineRoot = File(context.cacheDir, "quarantine/${gatewaySerial++}"),
         )
+        val store = QuarantineStore(
+            root = File(context.cacheDir, "${SafStorageGateway.QUARANTINE_DIR}/${gatewaySerial++}"),
+            gateway = concrete,
+            hasher = Sha256Hasher(),
+            clock = object : Clock {
+                override fun nowMillis(): Long = System.currentTimeMillis()
+            },
+        )
+        return QuarantineStorageGateway(concrete, store)
     }
 
     override fun destinationWith(existingName: String): Destination {
@@ -110,12 +133,12 @@ class SafStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
 
     // --- Fixture plumbing ---
 
-    private fun primaryDir(): File = TestDocumentsProvider.rootDir(context, TestDocumentsProvider.PRIMARY)
+    private fun primaryDir(): File = TestDocumentsProvider.rootDir(TestDocumentsProvider.PRIMARY)
 
-    private fun exportDir(): File = TestDocumentsProvider.rootDir(context, TestDocumentsProvider.EXPORT)
+    private fun exportDir(): File = TestDocumentsProvider.rootDir(TestDocumentsProvider.EXPORT)
 
     private fun reset(root: String) {
-        val dir = TestDocumentsProvider.rootDir(context, root)
+        val dir = TestDocumentsProvider.rootDir(root)
         dir.deleteRecursively()
         dir.mkdirs()
     }

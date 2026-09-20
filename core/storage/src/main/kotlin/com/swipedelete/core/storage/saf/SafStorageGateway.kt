@@ -2,9 +2,6 @@ package com.swipedelete.core.storage.saf
 
 import android.content.Context
 import android.os.StatFs
-import com.swipedelete.core.common.Clock
-import com.swipedelete.core.common.Hasher
-import com.swipedelete.core.common.Sha256Hasher
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.Capacity
 import com.swipedelete.core.model.ItemId
@@ -47,9 +44,14 @@ import java.io.InputStream
  * - [move] is copy-then-delete inside (or between) granted trees, because SAF
  *   has no raw rename and `DocumentsContract.moveDocument` gives no O(1)
  *   guarantee (V3). It checks for a name collision *before* writing and picks
- *   ` (1)`, ` (2)`… itself, so it never overwrites.
- * - [quarantine]/[restore] run through [QuarantineStore], the AC-3
- *   copy → verify → delete store.
+ *   ` (1)`, ` (2)`… itself, so it never overwrites. It never throws (other than
+ *   a [kotlinx.coroutines.CancellationException]): a provider error comes back
+ *   as [MoveResult.Failed] with the source untouched.
+ * - [quarantine]/[restore] delegate to a caller-supplied [QuarantineStore]. The
+ *   store is **not** created here: production wiring is
+ *   `ProtectedRoots → Journaling → Quarantine → Concrete`, so this concrete
+ *   gateway must not own a second quarantine root. Without a store, both calls
+ *   return an explicit not-configured failure and touch nothing.
  *
  * Items are addressed by their *tree-relative path* (`"dir/a.gif"`), which is
  * the convention `MediaItem.uri`/`MediaItem.path` already use elsewhere in the
@@ -59,27 +61,23 @@ import java.io.InputStream
  *
  * @param access the provider seam; [SafDocumentsContractAccess] in production,
  *   a fake in tests.
+ * @param quarantineStore the AC-3 store, supplied by the caller (Task 24/25
+ *   wiring). `null` means quarantine is not configured on this instance.
  */
 class SafStorageGateway(
     context: Context,
     private val persisted: PersistedGrantStore,
     private val access: DocumentTreeAccess = SafDocumentsContractAccess(context),
-    private val hasher: Hasher = Sha256Hasher(),
-    private val clock: Clock = SystemClock,
-    private val quarantineRoot: File = File(
-        context.getExternalFilesDir(null) ?: context.filesDir,
-        QUARANTINE_DIR,
-    ),
     private val walker: DocumentTreeWalker = DocumentTreeWalker(access),
+    private val quarantineStore: QuarantineStore? = null,
 ) : StorageGateway {
 
-    private val quarantineStore: QuarantineStore = QuarantineStore(quarantineRoot, this, hasher, clock)
-
-    init {
-        // `capacity()` stats the root before anything is stored; make sure the
-        // path exists so the pre-flight is never an I/O error.
-        quarantineRoot.mkdirs()
-    }
+    /**
+     * The volume [capacity] reports on. The quarantine root belongs to the
+     * caller's [QuarantineStore]; this gateway never creates one (a second root
+     * would be dead code under the production decorator stack).
+     */
+    private val capacityProbe: File = context.getExternalFilesDir(null) ?: context.filesDir
 
     override suspend fun sources(): List<SourceRef> = persisted.sources()
 
@@ -111,7 +109,21 @@ class SafStorageGateway(
         return access.openStream(node)
     }
 
-    override suspend fun move(item: MediaItem, destination: Destination): MoveResult {
+    /**
+     * Never throws — except a [CancellationException], which is rethrown
+     * untouched — so a provider error anywhere in the destination listing or the
+     * path resolvers comes back as [MoveResult.Failed] with the source
+     * untouched, as the frozen contract promises.
+     */
+    override suspend fun move(item: MediaItem, destination: Destination): MoveResult = try {
+        doMove(item, destination)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        MoveResult.Failed(error.message ?: "move_failed")
+    }
+
+    private suspend fun doMove(item: MediaItem, destination: Destination): MoveResult {
         val source = sourceFor(item) ?: return MoveResult.Failed("unknown_source")
         val relative = relativePathFor(source, item)
         if (relative.isBlank()) return MoveResult.Failed("item has no relative path")
@@ -133,13 +145,7 @@ class SafStorageGateway(
             .filter { it.isNotEmpty() }
             .joinToString("/")
 
-        val sourceMeta = try {
-            access.metadata(sourceNode)
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Throwable) {
-            return MoveResult.Failed("source_metadata_failed")
-        }
+        val sourceMeta = access.metadata(sourceNode)
 
         // Copy first; the source is only touched once a verified copy exists.
         val created = try {
@@ -193,13 +199,14 @@ class SafStorageGateway(
     }
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
-        quarantineStore.preflight(items)?.let { return it }
+        val store = quarantineStore ?: return notConfigured(items)
+        store.preflight(items)?.let { return it }
 
         val entries = ArrayList<JournalEntry>(items.size)
         val failures = ArrayList<Failure>()
         items.forEach { item ->
             try {
-                entries += quarantineStore.store(item, batch)
+                entries += store.store(item, batch)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -213,7 +220,22 @@ class SafStorageGateway(
         }
     }
 
-    override suspend fun restore(entry: JournalEntry): RestoreResult = quarantineStore.restore(entry)
+    override suspend fun restore(entry: JournalEntry): RestoreResult {
+        val store = quarantineStore ?: return RestoreResult.Conflict(entry.fromUri, QUARANTINE_NOT_CONFIGURED)
+        return store.restore(entry)
+    }
+
+    /**
+     * No store configured: every item carries an explicit failure and nothing is
+     * touched. [QuarantineResult] has no dedicated failure variant, so a
+     * [QuarantineResult.Partial] with one [Failure] per item is the honest form
+     * (`/QuarantineStore.empty` uses the same pattern for a refusal).
+     */
+    private fun notConfigured(items: List<MediaItem>): QuarantineResult.Partial =
+        QuarantineResult.Partial(
+            entries = emptyList(),
+            failures = items.map { Failure(it.id, QUARANTINE_NOT_CONFIGURED) },
+        )
 
     override suspend fun deletePermanently(items: List<MediaItem>): DeleteResult {
         val failures = ArrayList<Failure>()
@@ -242,7 +264,7 @@ class SafStorageGateway(
     }
 
     override suspend fun capacity(): Capacity = try {
-        val stats = StatFs(quarantineStoreRoot())
+        val stats = StatFs(capacityProbe.absolutePath)
         val total = stats.totalBytes
         val free = stats.availableBytes
         Capacity(totalBytes = total, usedBytes = total - free, freeBytes = free, reclaimableBytes = 0L)
@@ -323,10 +345,12 @@ class SafStorageGateway(
         )
     }
 
-    private fun quarantineStoreRoot(): String = quarantineRoot.absolutePath
-
     companion object {
+        /** Conventional directory name for the quarantine root, for caller wiring. */
         const val QUARANTINE_DIR: String = "quarantine"
+
+        /** Explicit failure reason when no [QuarantineStore] was supplied. */
+        const val QUARANTINE_NOT_CONFIGURED: String = "quarantine_not_configured"
 
         /**
          * First free `name`, `name (1)`, `name (2)`… among [existing]. A dotfile
@@ -348,9 +372,4 @@ class SafStorageGateway(
             return candidate
         }
     }
-}
-
-/** The wall clock used when the caller does not supply one. */
-internal object SystemClock : Clock {
-    override fun nowMillis(): Long = System.currentTimeMillis()
 }
