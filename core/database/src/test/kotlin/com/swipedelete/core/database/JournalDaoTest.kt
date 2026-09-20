@@ -50,6 +50,19 @@ class JournalDaoTest {
         db.journalDao().markOutcome("j1", JournalState.DONE, null)
         assertEquals(1, db.journalDao().page(limit = 10, offset = 0).size)
     }
+
+    @Test
+    fun `unresolved returns pending and failed rows but no terminal ones`() = runBlocking {
+        db.journalDao().insertPending(pending("p1", "item-1"))
+        db.journalDao().insertPending(pending("f1", "item-2"))
+        db.journalDao().markOutcome("f1", JournalState.FAILED, "boom")
+        db.journalDao().insertPending(pending("d1", "item-3"))
+        db.journalDao().markOutcome("d1", JournalState.DONE, null)
+        db.journalDao().insertPending(pending("a1", "item-4"))
+        db.journalDao().markOutcome("a1", JournalState.ABORTED, "reconciled_aborted")
+
+        assertEquals(listOf("f1", "p1"), db.journalDao().unresolved().map { it.id }.sorted())
+    }
 }
 
 private const val RETENTION_MS = 30L * 24 * 60 * 60 * 1000

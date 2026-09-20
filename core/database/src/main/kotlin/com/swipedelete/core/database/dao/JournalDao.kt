@@ -22,6 +22,16 @@ interface JournalDao {
     @Query("SELECT * FROM journal WHERE state = 'PENDING'")
     suspend fun pending(): List<JournalEntryEntity>
 
+    /**
+     * Every row that is not in a verified terminal state — `PENDING` (an
+     * operation was announced but never concluded) and `FAILED` (the operation
+     * reported a failure, but a mid-batch delegate failure marks *every* row of
+     * the call, including items the delegate physically moved before failing).
+     * Startup reconciliation (AC-5) inspects both kinds.
+     */
+    @Query("SELECT * FROM journal WHERE state IN ('PENDING', 'FAILED')")
+    suspend fun unresolved(): List<JournalEntryEntity>
+
     @Query("SELECT * FROM journal ORDER BY createdAt DESC LIMIT :limit OFFSET :offset")
     suspend fun page(limit: Int, offset: Int): List<JournalEntryEntity>
 

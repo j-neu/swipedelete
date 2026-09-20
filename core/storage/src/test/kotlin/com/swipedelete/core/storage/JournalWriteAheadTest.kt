@@ -153,6 +153,9 @@ private class RecordingJournal(private val trace: MutableList<String>) : Journal
     }
 
     override suspend fun pending() = rows.filter { it.state == JournalState.PENDING }
+    override suspend fun unresolved() =
+        rows.filter { it.state == JournalState.PENDING || it.state == JournalState.FAILED }
+
     override suspend fun page(limit: Int, offset: Int) = rows.drop(offset).take(limit)
     override suspend fun byBatch(batchId: String) = rows.filter { it.batchId == batchId }
 }
