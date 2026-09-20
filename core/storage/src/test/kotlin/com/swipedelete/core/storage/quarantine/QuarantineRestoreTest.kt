@@ -119,6 +119,36 @@ class QuarantineRestoreTest {
     }
 
     @Test
+    fun `restore of a SAF-shaped synthetic original path is the documented pathless refusal`() = runTest {
+        // Finding 7: a SAF item's `path` is the synthetic `"${treeUri}/${relativePath}"`
+        // display string, not an absolute filesystem path. The refusal this hits
+        // must be the documented pathless reason, NOT a claim of occupancy —
+        // otherwise the SAF leg of AC-17 is misreported.
+        val h = newHarness()
+        val item = h.item("Memes/a.gif", "saf-shaped".toByteArray())
+        val entry = h.quarantine(item)
+        val quarantined = File(entry.toUri!!)
+        val sidecarFile = QuarantineLayout.sidecarFor(quarantined)
+        val stored = SidecarCodec.decode(sidecarFile.readText())
+        val safSynthetic = "content://com.swipedelete.test/tree/primary%3AMemes/Memes/a.gif"
+        sidecarFile.writeText(SidecarCodec.encode(stored.copy(originalPath = safSynthetic)))
+        val quarantinedBytes = quarantined.readBytes()
+
+        val restore = h.gateway.restore(entry)
+
+        val conflict = restore as? RestoreResult.Conflict
+            ?: fail("expected Conflict but was $restore")
+        assertEquals(
+            QuarantineStore.NO_ORIGINAL_PATH,
+            conflict.occupiedBy,
+            "a SAF synthetic path must be refused as pathless, not reported as an occupied target",
+        )
+        assertTrue(quarantined.isFile, "the quarantined copy must survive the refusal")
+        assertContentEquals(quarantinedBytes, quarantined.readBytes())
+        assertTrue(sidecarFile.isFile, "the sidecar must survive the refusal")
+    }
+
+    @Test
     fun `restore into an occupied path reports Conflict rather than overwriting`() = runTest {
         val h = newHarness()
         val item = h.item("Memes/a.gif", "quarantined".toByteArray())
