@@ -205,7 +205,7 @@ class ChaosReconciliationTest {
 
 // --- The re-frozen AC-5 invariant -------------------------------------------
 
-private fun assertChaosInvariants(env: ChaosEnv, report: RecoveryReport, label: String) {
+internal suspend fun assertChaosInvariants(env: ChaosEnv, report: RecoveryReport, label: String) {
     val rows = env.journal.rows()
     val unknown = report.unknown.map { it.id }.toSet()
     val quarantined = env.store.scan()
@@ -269,14 +269,18 @@ private fun assertChaosInvariants(env: ChaosEnv, report: RecoveryReport, label: 
  * stack. `stopAt` arms a process death at the start of the (stopAt+1)-th
  * primitive, i.e. after exactly `stopAt` of them have happened.
  */
-private class ChaosEnv(stopAt: Int? = null) {
+internal class ChaosEnv(
+    stopAt: Int? = null,
+    journalFactory: (FaultInjector) -> ChaosJournal = { ChaosJournalDao(it) },
+    private val onDispose: () -> Unit = {},
+) {
     val base: File = Files.createTempDirectory("sd-chaos-base-").toFile()
     val root: File = Files.createTempDirectory("sd-chaos-quarantine-").toFile()
     val clock = ChaosClock(NOW)
     val fake = FakeStorageGateway()
     val injector: FaultInjector = fake.faultInjector
     val store = QuarantineStore(root, fake, Sha256Hasher(), clock)
-    val journal = ChaosJournalDao(injector)
+    val journal: ChaosJournal = journalFactory(injector)
     val gateway: StorageGateway
     val reconciler: Reconciler
     val items: List<MediaItem>
@@ -359,6 +363,7 @@ private class ChaosEnv(stopAt: Int? = null) {
     fun dispose() {
         base.deleteRecursively()
         root.deleteRecursively()
+        onDispose()
     }
 }
 
@@ -368,13 +373,20 @@ private class ChaosEnv(stopAt: Int? = null) {
  * reports each commit to the [FaultInjector] so journal writes are counted and
  * armable alongside the gateway's operations.
  */
-private class ChaosJournalDao(private val injector: FaultInjector) : JournalDao {
+internal interface ChaosJournal : JournalDao {
+    /** Every durable row, for the invariant checks. */
+    suspend fun rows(): List<JournalEntryEntity>
+
+    /** The row the journal wrote for [item], matched the way the journal writes it. */
+    suspend fun rowFor(item: MediaItem): JournalEntryEntity?
+}
+
+private class ChaosJournalDao(private val injector: FaultInjector) : ChaosJournal {
     private val rows = mutableListOf<JournalEntryEntity>()
 
-    fun rows(): List<JournalEntryEntity> = rows.toList()
+    override suspend fun rows(): List<JournalEntryEntity> = rows.toList()
 
-    /** The row reconciliation left for [item], matched the way the journal writes it. */
-    fun rowFor(item: MediaItem): JournalEntryEntity? =
+    override suspend fun rowFor(item: MediaItem): JournalEntryEntity? =
         rows.firstOrNull { it.itemId == item.id.value }
 
     override suspend fun insertPending(entry: JournalEntryEntity): Long {
@@ -404,19 +416,63 @@ private class ChaosJournalDao(private val injector: FaultInjector) : JournalDao 
         rows.filter { it.batchId == batchId }
 }
 
+/**
+ * The same [ChaosJournal] contract, backed by a **real Room database** (finding
+ * 6). Every commit is delegated to the real DAO/transaction path and only *then*
+ * counted, so the 22-point kill sweep exercises the same ordering over durable
+ * SQLite writes. [opKindById] is the only state kept here — Room owns the rows.
+ */
+internal class RoomBackedChaosJournal(
+    private val delegate: JournalDao,
+    private val injector: FaultInjector,
+) : ChaosJournal {
+    private val opKindById = mutableMapOf<String, OpKind>()
+
+    override suspend fun insertPending(entry: JournalEntryEntity): Long {
+        injector.beforeCommit(entry.opKind, JournalState.PENDING)
+        opKindById[entry.id] = entry.opKind
+        return delegate.insertPending(entry)
+    }
+
+    override suspend fun markOutcome(id: String, state: JournalState, error: String?): Int {
+        injector.beforeCommit(opKindById[id] ?: OpKind.QUARANTINE, state)
+        return delegate.markOutcome(id, state, error)
+    }
+
+    override suspend fun pending(): List<JournalEntryEntity> = delegate.pending()
+
+    override suspend fun unresolved(): List<JournalEntryEntity> = delegate.unresolved()
+
+    override suspend fun page(limit: Int, offset: Int): List<JournalEntryEntity> =
+        delegate.page(limit, offset)
+
+    override suspend fun byBatch(batchId: String): List<JournalEntryEntity> =
+        delegate.byBatch(batchId)
+
+    override suspend fun rows(): List<JournalEntryEntity> = delegate.page(limit = ROW_LIMIT, offset = 0)
+
+    override suspend fun rowFor(item: MediaItem): JournalEntryEntity? =
+        rows().firstOrNull { it.itemId == item.id.value }
+
+    private companion object {
+        /** The sweep holds at most [BATCH_SIZE] rows; the page query is comfortably larger. */
+        const val ROW_LIMIT = 1_000
+    }
+}
+
 /** A clock pinned to [now]; top-level classes share this package, so the name is unique. */
-private class ChaosClock(private val now: Long) : Clock {
+internal class ChaosClock(private val now: Long) : Clock {
     override fun nowMillis(): Long = now
 }
 
-private const val BATCH_SIZE = 5
-private const val BATCH_ID = "chaos-b1"
+internal const val BATCH_SIZE = 5
+internal const val BATCH_ID = "chaos-b1"
 
 /**
  * Primitive operations one 5-item quarantine batch reaches through the real
  * stack: 5 pending inserts → capacity pre-flight → 5 × (openStream, delete) →
  * 5 terminal marks. Pinned so a change that shortens the sweep is caught.
  */
-private const val EXPECTED_OPERATIONS = 21
+internal const val EXPECTED_OPERATIONS = 21
 
 private const val NOW = 1_700_000_000_000L
