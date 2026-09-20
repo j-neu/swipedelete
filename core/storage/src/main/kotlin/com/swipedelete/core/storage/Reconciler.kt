@@ -13,6 +13,7 @@ import com.swipedelete.core.model.Resolved
 import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.storage.quarantine.QuarantineEntry
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import kotlinx.coroutines.CancellationException
 
 /**
  * AC-5: startup reconciliation. A process death at any point must leave no item
@@ -31,12 +32,20 @@ import com.swipedelete.core.storage.quarantine.QuarantineStore
  * physically moved before failing, so a `PENDING`-only pass would strand those
  * items: the row would claim failure while the bytes sit in quarantine.
  *
- * **Correlation rule.** [JournalingStorageGateway] generates its own entry ids
+ * **Correlation rules.** [JournalingStorageGateway] generates its own entry ids
  * while [QuarantineStore] derives its entry id from the batch and item, so ids
- * never match. A quarantined file is correlated with a row by
- * **`batchId` + `originalUri`**: the row's `batchId` and `fromUri` against the
- * sidecar's `batchId` and `originalUri` (read through [QuarantineStore.scan],
- * which already skips missing or unparseable sidecars).
+ * never match. A quarantined file is correlated with a row on:
+ *
+ * - `QUARANTINE`: **`batchId` + `originalUri`** — the row's `batchId` and
+ *   `fromUri` against the sidecar's `batchId` and `originalUri` (the decorator
+ *   passes the caller's batch through, so this holds in production).
+ * - `RESTORE`: the **quarantine file path** — `QuarantineEntry.path` against the
+ *   row's `fromUri`. The decorator gives a restore row a *fresh* batch id
+ *   (`newBatchId()`), so `batchId` can never correlate it, and the row's
+ *   `fromUri` is exactly the quarantined copy's path.
+ *
+ * Sidecars are read through [QuarantineStore.scan], which already skips missing
+ * or unparseable sidecars.
  *
  * **Constructor deviation.** The brief specified a [StorageGateway] parameter
  * and "destination existence" resolved through it, but [StorageGateway] exposes
@@ -74,7 +83,7 @@ class Reconciler(
         val unknown = ArrayList<JournalEntry>()
 
         rows.forEach { row ->
-            val outcome = classify(row, quarantined)
+            val outcome = classifyContainingProbeFailures(row, quarantined)
             if (outcome == null) {
                 unknown += row.toJournalEntry()
             } else {
@@ -94,6 +103,25 @@ class Reconciler(
     }
 
     /**
+     * [classify] with a per-row probe failure contained. One [exists] probe that
+     * throws (a `SecurityException` on a content URI, say, or a vanished
+     * removable volume) must not abort the whole launch pass: that row is
+     * reported as unknown and every other row is still classified and recorded.
+     * A [CancellationException] is never swallowed — it propagates so a
+     * cancelled scope does not silently degrade to "everything unknown".
+     */
+    private suspend fun classifyContainingProbeFailures(
+        row: JournalEntryEntity,
+        quarantined: List<QuarantineEntry>,
+    ): JournalOutcome? = try {
+        classify(row, quarantined)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (error: Throwable) {
+        null
+    }
+
+    /**
      * The classification rules, in order. `null` means "unknown": the evidence
      * is contradictory or absent, so the row is reported rather than guessed at.
      */
@@ -104,7 +132,7 @@ class Reconciler(
         OpKind.QUARANTINE -> when {
             // A verified copy (and its sidecar) is in quarantine: the move
             // completed, whatever the row's stale state says.
-            quarantined.any { it.correlatesWith(row) } -> JournalOutcome.DONE
+            quarantined.any { it.matchesQuarantine(row) } -> JournalOutcome.DONE
             exists(row.fromUri) -> JournalOutcome.ABORTED
             else -> null
         }
@@ -120,7 +148,11 @@ class Reconciler(
 
         OpKind.RESTORE -> when {
             exists(row.toUri ?: row.fromUri) -> JournalOutcome.DONE
-            quarantined.any { it.correlatesWith(row) } -> JournalOutcome.ABORTED
+            // The quarantined copy the row names is still on disk, so the bytes
+            // never made it back to the original path. Correlation is on the
+            // quarantine file path: a restore row carries a fresh batch id
+            // (see the class KDoc), and its fromUri *is* the quarantine path.
+            quarantined.any { it.isQuarantinedAt(row.fromUri) } -> JournalOutcome.ABORTED
             else -> null
         }
 
@@ -134,12 +166,18 @@ class Reconciler(
     }
 
     /**
-     * The correlation rule: a quarantine sidecar belongs to [row] when both the
-     * batch and the original URI match. Journal ids are generated independently
-     * by the journaling decorator and the quarantine store, so ids are unusable.
+     * `QUARANTINE` correlation: a sidecar belongs to [row] when both the batch
+     * and the original URI match. Journal ids are generated independently by the
+     * journaling decorator and the quarantine store, so ids are unusable.
      */
-    private fun QuarantineEntry.correlatesWith(row: JournalEntryEntity): Boolean =
+    private fun QuarantineEntry.matchesQuarantine(row: JournalEntryEntity): Boolean =
         sidecar.batchId == row.batchId && sidecar.originalUri == row.fromUri
+
+    /**
+     * `RESTORE` correlation: the quarantine file at the path the row records in
+     * `fromUri` is still present, so the restore never completed.
+     */
+    private fun QuarantineEntry.isQuarantinedAt(path: String): Boolean = this.path == path
 
     private fun JournalOutcome.state(): JournalState = when (this) {
         JournalOutcome.ABORTED -> JournalState.ABORTED

@@ -6,6 +6,7 @@ import com.swipedelete.core.database.dao.JournalDao
 import com.swipedelete.core.database.entity.JournalEntryEntity
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.JournalOutcome
 import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
@@ -20,6 +21,7 @@ import com.swipedelete.core.storage.quarantine.QuarantineStore
 import kotlinx.coroutines.test.runTest
 import java.io.File
 import java.nio.file.Files
+import java.util.UUID
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
@@ -37,7 +39,7 @@ import kotlin.test.assertTrue
  * journal rows' state. It must never delete, move or rewrite a user file
  * (spec §6.2: the journal is immutable history).
  *
- * [OpKind.FAILED] rows are reconciled as well as `PENDING` ones: a mid-batch
+ * `FAILED` rows are reconciled as well as `PENDING` ones: a mid-batch
  * delegate failure marks *every* row of the call `FAILED`, including items the
  * delegate physically moved before failing.
  *
@@ -82,6 +84,7 @@ class ReconcilerTest {
         assertEquals(listOf(Resolved("j1", JournalOutcome.DONE)), report.resolved)
         assertTrue(report.unknown.isEmpty())
         assertEquals(JournalState.DONE, h.journal.stateOf("j1"))
+        assertEquals("reconciled_done", h.journal.errorOf("j1"), "the recorded reason must be stable")
     }
 
     @Test
@@ -145,6 +148,11 @@ class ReconcilerTest {
 
         assertEquals(listOf(Resolved("j1", JournalOutcome.DONE)), report.resolved)
         assertEquals(JournalState.DONE, h.journal.stateOf("j1"))
+        assertEquals(
+            "reconciled_done (injected mid-batch failure)",
+            h.journal.errorOf("j1"),
+            "a corrected row must keep the failure that made it FAILED",
+        )
     }
 
     @Test
@@ -167,6 +175,11 @@ class ReconcilerTest {
         assertEquals(JournalState.ABORTED, h.journal.stateOf("j1"))
         assertTrue(h.fake.fileExists(item.path!!), "the original must be untouched")
         assertContentEquals("untouched".toByteArray(), h.contentOf(item))
+        assertEquals(
+            "reconciled_aborted (injected mid-batch failure)",
+            h.journal.errorOf("j1"),
+            "the prior failure reason must be preserved in the recorded reason",
+        )
     }
 
     @Test
@@ -235,6 +248,36 @@ class ReconcilerTest {
     }
 
     @Test
+    fun `a probe that throws for one row does not abort the whole pass`() = runTest {
+        val h = newHarness()
+        val quarantined = h.item("Memes/a.gif", "quarantined".toByteArray())
+        h.quarantineForReal(quarantined, batch = "b1")
+        val atSource = h.item("Memes/b.gif", "kept".toByteArray())
+        val poison = File(h.base, "poison.gif").absolutePath
+        h.journal.seed(h.row(id = "j1", batchId = "b1", fromUri = quarantined.path!!))
+        h.journal.seed(h.row(id = "j2", batchId = "b1", fromUri = poison))
+        h.journal.seed(h.row(id = "j3", batchId = "b1", fromUri = atSource.path!!))
+        // A probe that dies for exactly one row, as a SecurityException on a
+        // content URI would.
+        val reconciler = Reconciler(h.journal, h.store) { uri ->
+            if (uri == poison) throw SecurityException("denied: $uri")
+            h.fake.fileExists(uri)
+        }
+
+        val report = reconciler.reconcile()
+
+        assertEquals(
+            listOf(Resolved("j1", JournalOutcome.DONE), Resolved("j3", JournalOutcome.ABORTED)),
+            report.resolved,
+            "the rows around the failing probe must still be classified",
+        )
+        assertEquals(listOf("j2"), report.unknown.map { it.id }, "the un-probeable row is reported")
+        assertEquals(JournalState.DONE, h.journal.stateOf("j1"))
+        assertEquals(JournalState.PENDING, h.journal.stateOf("j2"))
+        assertEquals(JournalState.ABORTED, h.journal.stateOf("j3"))
+    }
+
+    @Test
     fun `a move entry completed before the interruption is DONE`() = runTest {
         val h = newHarness()
         val moved = h.item("Export/a.gif", "moved".toByteArray())
@@ -295,45 +338,39 @@ class ReconcilerTest {
     }
 
     @Test
-    fun `a restore entry whose original is back is DONE`() = runTest {
+    fun `a restore that completed before the interruption is DONE`() = runTest {
         val h = newHarness()
-        val restored = h.item("Memes/a.gif", "restored".toByteArray())
-        h.journal.seed(
-            h.row(
-                id = "j1",
-                batchId = "b1",
-                fromUri = File(h.root, "b1/Memes/a.gif").absolutePath,
-                toUri = restored.path!!,
-                opKind = OpKind.RESTORE,
-            ),
-        )
+        val item = h.item("Memes/a.gif", "restored for real".toByteArray())
+        val quarantined = h.quarantineForReal(item, batch = "b1")
+        // Really complete the restore: the bytes are back at the original path
+        // and the quarantine copy (and its sidecar) are gone.
+        assertTrue(h.store.restore(quarantined) is RestoreResult.Restored)
+        assertTrue(File(item.path!!).isFile, "the restored bytes must be back on disk")
+        assertTrue(h.store.scan().isEmpty(), "the quarantine copy must be gone")
+        h.journal.seed(h.restoreRow(id = "j1", quarantined = quarantined, originalUri = item.path!!))
 
         val report = h.reconciler.reconcile()
 
         assertEquals(listOf(Resolved("j1", JournalOutcome.DONE)), report.resolved)
         assertEquals(JournalState.DONE, h.journal.stateOf("j1"))
+        assertEquals("reconciled_done", h.journal.errorOf("j1"))
+        assertContentEquals("restored for real".toByteArray(), File(item.path!!).readBytes())
     }
 
     @Test
-    fun `a restore entry whose bytes are still in quarantine is ABORTED`() = runTest {
+    fun `a restore interrupted before the bytes were written back is ABORTED`() = runTest {
         val h = newHarness()
         val item = h.item("Memes/a.gif", "still quarantined".toByteArray())
-        h.quarantineForReal(item, batch = "b1")
-        // The sidecar correlates on batchId + originalUri == row.fromUri.
-        h.journal.seed(
-            h.row(
-                id = "j1",
-                batchId = "b1",
-                fromUri = item.path!!,
-                toUri = null,
-                opKind = OpKind.RESTORE,
-            ),
-        )
+        val quarantined = h.quarantineForReal(item, batch = "b1")
+        assertFalse(File(item.path!!).exists(), "nothing may be back at the original path")
+        h.journal.seed(h.restoreRow(id = "j1", quarantined = quarantined, originalUri = item.path!!))
 
         val report = h.reconciler.reconcile()
 
         assertEquals(listOf(Resolved("j1", JournalOutcome.ABORTED)), report.resolved)
         assertEquals(JournalState.ABORTED, h.journal.stateOf("j1"))
+        assertEquals("reconciled_aborted", h.journal.errorOf("j1"))
+        assertTrue(File(quarantined.toUri!!).isFile, "the quarantined copy must survive")
     }
 
     @Test
@@ -404,8 +441,12 @@ class ReconcilerTest {
         val store = QuarantineStore(root, fake, Sha256Hasher(), ReconcilerClock(NOW))
         val journal = RecordingJournalDao()
 
-        /** The app-layer existence probe; in tests it is backed by the fake gateway. */
-        val reconciler = Reconciler(journal, store) { fake.fileExists(it) }
+        /**
+         * The app-layer existence probe. In tests it sees both the fake
+         * gateway's items and the real bytes a [QuarantineStore.restore] puts
+         * back on disk, mirroring a real probe that checks the filesystem.
+         */
+        val reconciler = Reconciler(journal, store) { fake.fileExists(it) || File(it).isFile }
 
         init {
             fake.addSource(source)
@@ -436,9 +477,25 @@ class ReconcilerTest {
             return item
         }
 
-        suspend fun quarantineForReal(item: MediaItem, batch: String) {
+        suspend fun quarantineForReal(item: MediaItem, batch: String): JournalEntry =
             store.store(item, BatchId(batch))
-        }
+
+        /**
+         * The row shape [JournalingStorageGateway.restore] actually writes
+         * (JournalingStorageGateway.kt:109-133): a **fresh random batch id**
+         * from `newBatchId()`, `fromUri` = the quarantined file's path and
+         * `toUri` = the original path. A random batch id can never equal a
+         * sidecar's batch, so only the quarantine *path* can correlate the row.
+         */
+        fun restoreRow(id: String, quarantined: JournalEntry, originalUri: String): JournalEntryEntity =
+            row(
+                id = id,
+                batchId = UUID.randomUUID().toString(),
+                fromUri = quarantined.toUri!!,
+                toUri = originalUri,
+                opKind = OpKind.RESTORE,
+                itemId = quarantined.itemId.value,
+            )
 
         fun contentOf(item: MediaItem): ByteArray = fake.openStream(item).use { it.readBytes() }
 
@@ -507,6 +564,7 @@ private class RecordingJournalDao : JournalDao {
     }
 
     fun stateOf(id: String): JournalState = rows.single { it.id == id }.state
+    fun errorOf(id: String): String? = rows.single { it.id == id }.error
     fun states(): Map<String, JournalState> = rows.associate { it.id to it.state }
 
     override suspend fun insertPending(entry: JournalEntryEntity): Long {
