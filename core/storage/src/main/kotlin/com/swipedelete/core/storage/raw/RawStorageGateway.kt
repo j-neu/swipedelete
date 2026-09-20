@@ -44,8 +44,11 @@ data class RawScanError(val path: String, val reason: String)
  * This is the Tier-2 analogue of `SafStorageGateway.enumerateDetailed`'s
  * `WalkPage`: the same conventions — an explicit [truncated] flag, a cumulative
  * [unreadableEntries] count and a named [errors] list — but it reports *media
- * exclusion* as well, which is what makes AC-10 observable. It deliberately
- * does not introduce a second truncation mechanism on the frozen interface:
+ * exclusion* as well, which is what makes AC-10 observable. [mediaSkipped] is
+ * split by how the file was classified ([mediaSkippedByExtension],
+ * [mediaSkippedByContent], [unreadableMediaSkipped]), and out-of-root
+ * directory children are counted in [outOfRootEntries]. It deliberately does
+ * not introduce a second truncation mechanism on the frozen interface:
  * [RawStorageGateway.enumerate] still returns a plain `Page`, and callers that
  * need the honest report use [RawStorageGateway.scan].
  */
@@ -54,12 +57,43 @@ data class RawScanReport(
     val items: List<MediaItem>,
     val entriesScanned: Int,
     val mediaSkipped: Int,
+    val mediaSkippedByExtension: Int,
+    val mediaSkippedByContent: Int,
+    val unreadableMediaSkipped: Int,
     val unreadableEntries: Int,
+    val outOfRootEntries: Int,
     val directoriesVisited: Int,
     val maxDepth: Int,
     val truncated: Boolean,
     val errors: List<RawScanError>,
 )
+
+/**
+ * Path canonicalisation and containment, shared by every raw traversal.
+ *
+ * [File.isDirectory] and [File.listFiles] follow symlinks, so a link inside a
+ * root can resolve outside it. Every traversal therefore canonicalises a
+ * directory child before descending and skips it unless [isWithin] says it is
+ * genuinely inside the root.
+ */
+internal object RawPaths {
+
+    /**
+     * The real path of [file], with symbolic links resolved. `File.canonicalFile`
+     * does not resolve directory symlinks on Windows, so [java.nio.file.Path.toRealPath]
+     * is used when the path exists; non-existent paths fall back to canonical /
+     * absolute form.
+     */
+    fun canonical(file: File): File = try {
+        file.toPath().toRealPath().toFile()
+    } catch (error: Throwable) {
+        runCatching { file.canonicalFile }.getOrElse { file.absoluteFile }
+    }
+
+    /** True when [file] is [root] itself or a descendant of it. */
+    fun isWithin(file: File, root: File): Boolean =
+        file == root || file.path.startsWith(root.path + File.separator)
+}
 
 /**
  * Tier 2 storage: raw-path access to shared storage, available **only** when the
@@ -75,14 +109,17 @@ data class RawScanReport(
  *
  * ### AC-10 is enforced structurally
  * [RawMediaPolicy] is consulted at every entry point, so media cannot "escape"
- * through any method:
+ * through any method. A file is media when its MIME type is media, when its name
+ * carries a media extension, **or** when its leading bytes match a known media
+ * signature — so a JPEG named `photo` or an MP4 renamed `clip.tmp` is still
+ * refused:
  * - [metadata] / [openStream] on a media item throw [MediaNotPermittedException].
  * - [move] on a media item returns `MoveResult.Failed("media_not_permitted")`.
  * - [quarantine] / [deletePermanently] list a media item as an explicit
  *   [Failure] (`media_not_permitted`) and still process the non-media items in
  *   the same call.
  * - [enumerate] / [scan] **skip** media files entirely and report how many they
- *   skipped ([RawScanReport.mediaSkipped]).
+ *   skipped ([RawScanReport.mediaSkipped], split by classification basis).
  *
  * ### Bounds and honesty (spec §9.4)
  * A scan is breadth-first with [maxDepth] (default [DEFAULT_MAX_DEPTH]) and
@@ -98,13 +135,16 @@ data class RawScanReport(
  * at construction.
  *
  * ### Host-testability
- * The two Android dependencies are injectable:
+ * The Android and filesystem dependencies are injectable:
  * - [capacityOf] defaults to [statFsCapacity] (`StatFs`), so `capacity()` never
  *   needs an Android runtime in a test.
- * - [listChildren] defaults to `File.listFiles()`, the single filesystem
+ * - [listChildren] defaults to `File.listFiles()`, the single directory-listing
  *   primitive the scan uses; the default is the production behaviour, and
- *   replacing it is how an unreadable directory is simulated on a host (the
- *   same seam pattern Task 20 used for `DocumentTreeAccess`).
+ *   replacing it is how an unreadable directory or an out-of-root child is
+ *   simulated on a host (the same seam pattern Task 20 used for
+ *   `DocumentTreeAccess`).
+ * - [readBytes] defaults to [RawMediaPolicy.readLeadingBytes], so the
+ *   unreadable-body rule can be exercised deterministically on a host.
  * The All Files Access flag itself is a plain constructor argument, and the
  * environment probe is a function parameter of [fromEnvironment], so no test
  * depends on the device's real permission state.
@@ -115,6 +155,10 @@ data class RawScanReport(
  *   fail: the DI graph (Task 24) must not build this gateway at Tier 0/1.
  * @param capacityOf the volume probe behind [capacity].
  * @param listChildren the directory-listing primitive; `null` means unreadable.
+ * @param maxDepth the descent cap, in levels below a root.
+ * @param maxEntries the per-scan entry cap.
+ * @param readBytes the leading-bytes reader behind media sniffing; `null` means
+ *   unreadable, which is classified as media.
  */
 class RawStorageGateway(
     private val roots: List<File>,
@@ -123,6 +167,7 @@ class RawStorageGateway(
     private val listChildren: (File) -> List<File>? = { it.listFiles()?.toList() },
     private val maxDepth: Int = DEFAULT_MAX_DEPTH,
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    private val readBytes: (File) -> ByteArray? = RawMediaPolicy::readLeadingBytes,
 ) : StorageGateway {
 
     private val canonicalRoots: List<File>
@@ -160,13 +205,31 @@ class RawStorageGateway(
      */
     suspend fun scan(source: SourceRef): RawScanReport {
         val root = rootFor(source)
-            ?: return RawScanReport(source, emptyList(), 0, 0, 0, 0, 0, truncated = false, errors = emptyList())
+            ?: return RawScanReport(
+                source = source,
+                items = emptyList(),
+                entriesScanned = 0,
+                mediaSkipped = 0,
+                mediaSkippedByExtension = 0,
+                mediaSkippedByContent = 0,
+                unreadableMediaSkipped = 0,
+                unreadableEntries = 0,
+                outOfRootEntries = 0,
+                directoriesVisited = 0,
+                maxDepth = 0,
+                truncated = false,
+                errors = emptyList(),
+            )
 
         val items = ArrayList<MediaItem>()
         val errors = ArrayList<RawScanError>()
         var scanned = 0
         var mediaSkipped = 0
+        var mediaSkippedByExtension = 0
+        var mediaSkippedByContent = 0
+        var unreadableMediaSkipped = 0
         var unreadable = 0
+        var outOfRoot = 0
         var directoriesVisited = 0
         var maxDepthSeen = 0
         var truncated = false
@@ -194,18 +257,36 @@ class RawStorageGateway(
                 }
                 scanned++
                 if (child.isDirectory) {
+                    // isDirectory/listFiles follow symlinks: a link can resolve
+                    // outside the root, so containment is re-checked before descent.
+                    val directory = RawPaths.canonical(child)
+                    if (!RawPaths.isWithin(directory, root)) {
+                        outOfRoot++
+                        errors += RawScanError(child.path, OUTSIDE_ROOT)
+                        continue
+                    }
                     if (node.depth + 1 > maxDepth) {
                         truncated = true
                         continue
                     }
                     maxDepthSeen = maxOf(maxDepthSeen, node.depth + 1)
-                    frontier.addLast(Node(child, node.depth + 1))
-                } else if (RawMediaPolicy.isMediaFile(child)) {
-                    // AC-10: media is MediaStore's job; the raw gateway never
-                    // serves it, and the count is reported rather than hidden.
-                    mediaSkipped++
+                    frontier.addLast(Node(directory, node.depth + 1))
                 } else {
-                    items += itemFor(child, source)
+                    // AC-10: media is MediaStore's job; the raw gateway never
+                    // serves it, and how it was classified is reported rather
+                    // than hidden.
+                    val verdict = classify(child)
+                    if (verdict.media) {
+                        mediaSkipped++
+                        when (verdict.basis) {
+                            MediaBasis.EXTENSION -> mediaSkippedByExtension++
+                            MediaBasis.CONTENT -> mediaSkippedByContent++
+                            MediaBasis.UNREADABLE -> unreadableMediaSkipped++
+                            null -> Unit
+                        }
+                    } else {
+                        items += itemFor(child, source)
+                    }
                 }
             }
         }
@@ -215,7 +296,11 @@ class RawStorageGateway(
             items = items,
             entriesScanned = scanned,
             mediaSkipped = mediaSkipped,
+            mediaSkippedByExtension = mediaSkippedByExtension,
+            mediaSkippedByContent = mediaSkippedByContent,
+            unreadableMediaSkipped = unreadableMediaSkipped,
             unreadableEntries = unreadable,
+            outOfRootEntries = outOfRoot,
             directoriesVisited = directoriesVisited,
             maxDepth = maxDepthSeen,
             truncated = truncated,
@@ -291,6 +376,12 @@ class RawStorageGateway(
                 failures += Failure(item.id, "outside_roots")
                 continue
             }
+            // Spec §6.3: a root the user granted is never a delete target, at
+            // any tier. The raw gateway applies the same rule as the SAF tier.
+            if (canonicalRoots.any { it == file }) {
+                failures += Failure(item.id, ROOT_DELETE_REFUSED)
+                continue
+            }
             if (!file.exists()) {
                 failures += Failure(item.id, "not_found")
                 continue
@@ -341,10 +432,14 @@ class RawStorageGateway(
                 val children = list(node.dir) ?: continue
                 val hidden = node.hiddenByNoMedia || children.any { it.name == NO_MEDIA }
                 if (children.isEmpty() && node.depth > 0 && !hidden && !isKnownAppPath(node.dir)) {
-                    empty += canonical(node.dir)
+                    empty += RawPaths.canonical(node.dir)
                 }
                 for (child in children) {
-                    if (child.isDirectory) frontier.addLast(Node(child, node.depth + 1, hidden))
+                    if (!child.isDirectory) continue
+                    // Never descend through a link that leaves the root.
+                    val directory = RawPaths.canonical(child)
+                    if (!RawPaths.isWithin(directory, root)) continue
+                    frontier.addLast(Node(directory, node.depth + 1, hidden))
                 }
             }
         }
@@ -367,9 +462,13 @@ class RawStorageGateway(
         val destinationDir = resolveDirectory(destinationRoot, destination.relativePath)
             ?: return MoveResult.Failed("destination_not_found")
 
-        val existing = list(destinationDir).orEmpty().mapTo(mutableSetOf()) { it.name }
-        val collision = sourceFile.name in existing
-        val targetName = if (collision) SafStorageGateway.freeName(existing, sourceFile.name) else sourceFile.name
+        // An unlistable destination must not look empty: renameTo could overwrite
+        // on a platform that permits it. Fail explicitly instead.
+        val existing = list(destinationDir)
+            ?: return MoveResult.Failed(DESTINATION_UNREADABLE)
+        val names = existing.mapTo(mutableSetOf()) { it.name }
+        val collision = sourceFile.name in names
+        val targetName = if (collision) SafStorageGateway.freeName(names, sourceFile.name) else sourceFile.name
         val target = File(destinationDir, targetName)
 
         val moved = if (sourceFile.renameTo(target)) true else copyThenDelete(sourceFile, target)
@@ -399,17 +498,30 @@ class RawStorageGateway(
         while (frontier.isNotEmpty()) {
             val children = list(frontier.removeFirst()) ?: continue
             for (child in children) {
-                if (child.isDirectory) frontier.addLast(child) else if (RawMediaPolicy.isMediaFile(child)) return true
+                if (child.isDirectory) {
+                    val canonical = RawPaths.canonical(child)
+                    if (canonicalRoots.any { RawPaths.isWithin(canonical, it) }) frontier.addLast(canonical)
+                } else if (classify(child).media) {
+                    return true
+                }
             }
         }
         return false
     }
 
-    /** A media item, by MIME prefix *or* by media extension (AC-10). */
+    /** The content-aware AC-10 verdict for [file], through the injected byte reader. */
+    private fun classify(file: File): MediaVerdict = RawMediaPolicy.classify(file, readBytes)
+
+    /**
+     * A media item: by MIME prefix, by media extension, **or** by magic-byte
+     * sniff (AC-10). A path outside every root falls back to its extension,
+     * since its bytes cannot be read through this gateway anyway.
+     */
     private fun isMedia(item: MediaItem): Boolean {
         if (RawMediaPolicy.isMediaMime(item.mime)) return true
         val path = item.path ?: item.uri
-        return RawMediaPolicy.isMediaName(File(path).name)
+        val file = containedFile(item)
+        return if (file == null) RawMediaPolicy.isMediaName(File(path).name) else classify(file).media
     }
 
     private fun rejectMedia(item: MediaItem, entryPoint: String) {
@@ -502,11 +614,9 @@ class RawStorageGateway(
 
     private fun isKnownAppPath(directory: File): Boolean = directory.name.lowercase() in KNOWN_APP_DIR_NAMES
 
-    private fun canonical(file: File): File =
-        runCatching { file.canonicalFile }.getOrElse { file.absoluteFile }
+    private fun canonical(file: File): File = RawPaths.canonical(file)
 
-    private fun File.isWithin(root: File): Boolean =
-        this == root || path.startsWith(root.path + File.separator)
+    private fun File.isWithin(root: File): Boolean = RawPaths.isWithin(this, root)
 
     private fun File.relativeTo(root: File): String =
         path.removePrefix(root.path).trimStart('\\', '/').replace('\\', '/')
@@ -526,6 +636,15 @@ class RawStorageGateway(
 
         /** Explicit refusal when no quarantine store backs the raw gateway. */
         const val QUARANTINE_NOT_CONFIGURED: String = "quarantine_not_configured"
+
+        /** A directory child that canonicalises outside the root being walked. */
+        const val OUTSIDE_ROOT: String = "outside_root"
+
+        /** A declared root is never a delete target (spec §6.3). */
+        const val ROOT_DELETE_REFUSED: String = "refusing_to_delete_a_root"
+
+        /** A move destination that cannot be listed is refused, not assumed empty. */
+        const val DESTINATION_UNREADABLE: String = "destination_unreadable"
 
         /**
          * Directory names the raw gateway never reports as empty (§6.4 "not a

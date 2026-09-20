@@ -87,6 +87,16 @@ class RawStorageGatewayTest {
         )
     }
 
+    /** `FF D8 FF` — the JPEG magic. */
+    private val jpegBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0x00, 0x10)
+
+    /** A minimal `ftyp`-branded MP4/MOV header (`ftyp` at offset 4, brand `isom`). */
+    private val mp4Bytes =
+        byteArrayOf(0x00, 0x00, 0x00, 0x18) + "ftyp".toByteArray() + "isom".toByteArray() + ByteArray(4)
+
+    /** `PK\x03\x04` — the ZIP/APK magic, which must not be a media false positive. */
+    private val zipBytes = byteArrayOf(0x50, 0x4B, 0x03, 0x04) + ByteArray(16)
+
     @Test
     fun `raw gateway is only constructed when All Files Access is held`() = runTest {
         val root = newRoot()
@@ -290,5 +300,171 @@ class RawStorageGatewayTest {
             "the unreadable directory must be named in the report, was ${report.errors}",
         )
         assertEquals(listOf("readable/keep.apk"), report.items.map { it.relativePath })
+    }
+
+    @Test
+    fun `media is detected by content, not only by extension`() = runTest {
+        // The AC-10 hole: a JPEG with no extension and an MP4 renamed `.tmp`
+        // both have a non-media name, so extension-only classification would
+        // enumerate and delete media through the raw gateway.
+        val root = newRoot()
+        writeFile(root, "photo", jpegBytes)
+        writeFile(root, "clip.tmp", mp4Bytes)
+        writeFile(root, "installer.apk", zipBytes)
+        writeFile(root, "notes.txt", "plain text".toByteArray())
+
+        val gateway = gateway(root)
+        val source = gateway.sources().single()
+        val report = gateway.scan(source)
+
+        assertEquals(
+            setOf("installer.apk", "notes.txt"),
+            report.items.map { it.relativePath }.toSet(),
+            "content-detected media must not be enumerated",
+        )
+        assertEquals(2, report.mediaSkippedByContent, "both sniffs must be counted separately")
+        assertEquals(0, report.mediaSkippedByExtension)
+        assertEquals(2, report.mediaSkipped)
+
+        val photo = itemFor(File(root, "photo"), source, "application/octet-stream")
+        val clip = itemFor(File(root, "clip.tmp"), source, "application/octet-stream")
+        assertFailsWith<MediaNotPermittedException> { gateway.metadata(photo) }
+        assertFailsWith<MediaNotPermittedException> { gateway.openStream(clip) }
+
+        val deleted = gateway.deletePermanently(listOf(photo, clip))
+        assertTrue(deleted is DeleteResult.Partial, "was $deleted")
+        assertEquals(2, deleted.failures.count { it.reason == "media_not_permitted" })
+        assertEquals(0, deleted.deleted)
+        assertTrue(File(root, "photo").exists(), "content-detected media must never be deleted (AC-10)")
+        assertTrue(File(root, "clip.tmp").exists())
+
+        // The ZIP/APK signature is not a media false positive.
+        val apk = itemFor(File(root, "installer.apk"), source, "application/vnd.android.package-archive")
+        assertEquals(apk.sizeBytes, gateway.metadata(apk).sizeBytes)
+        gateway.openStream(apk).close()
+    }
+
+    @Test
+    fun `a file whose bytes cannot be read is treated as media`() = runTest {
+        val root = newRoot()
+        val opaque = writeFile(root, "mystery", byteArrayOf(0x00, 0x01, 0x02, 0x03))
+        val gateway = RawStorageGateway(
+            roots = listOf(root),
+            hasAllFilesAccess = true,
+            readBytes = { file ->
+                if (file.name == "mystery") null else RawMediaPolicy.readLeadingBytes(file)
+            },
+        )
+        val source = gateway.sources().single()
+
+        val report = gateway.scan(source)
+        assertTrue(report.items.isEmpty(), "an unreadable body is refused, not enumerated")
+        assertEquals(1, report.unreadableMediaSkipped)
+
+        val item = itemFor(opaque, source, "application/octet-stream")
+        assertFailsWith<MediaNotPermittedException> { gateway.metadata(item) }
+        val deleted = gateway.deletePermanently(listOf(item))
+        assertTrue(deleted is DeleteResult.Partial, "was $deleted")
+        assertEquals("media_not_permitted", deleted.failures.single().reason)
+        assertTrue(opaque.exists(), "an unreadable file must never be deleted")
+    }
+
+    @Test
+    fun `a directory child outside the roots is never traversed`() = runTest {
+        // `File.isDirectory`/`listFiles` follow symlinks, so a link inside a
+        // root can point elsewhere. The seam feeds that child deterministically;
+        // the symlink integration case is covered separately below.
+        val root = newRoot()
+        val outside = newRoot()
+        writeFile(outside, "outside.apk")
+        val rootDir = root.canonicalFile
+        val outsideDir = outside.canonicalFile
+
+        val gateway = RawStorageGateway(
+            roots = listOf(root),
+            hasAllFilesAccess = true,
+            listChildren = { directory ->
+                if (directory == rootDir) {
+                    listOf(outsideDir) + rootDir.listFiles()!!.toList()
+                } else {
+                    directory.listFiles()?.toList()
+                }
+            },
+        )
+
+        val report = gateway.scan(gateway.sources().single())
+
+        assertTrue(report.items.none { it.path.orEmpty().contains("outside") }, "nothing outside a root may be walked")
+        assertEquals(1, report.outOfRootEntries, "a skipped out-of-root entry must be counted")
+        assertTrue(report.errors.any { it.reason == "outside_root" }, "and it must be named: ${report.errors}")
+    }
+
+    @Test
+    fun `a symlink inside a root pointing outside is not traversed`() = runTest {
+        val root = newRoot()
+        val outside = newRoot()
+        writeFile(root, "inside.apk")
+        writeFile(outside, "outside.apk")
+        val link = File(root, "link")
+
+        val created = try {
+            Files.createSymbolicLink(link.toPath(), outside.canonicalFile.toPath())
+            true
+        } catch (error: Throwable) {
+            false
+        }
+
+        if (created) {
+            val report = gateway(root).scan(gateway(root).sources().single())
+            assertEquals(listOf("inside.apk"), report.items.map { it.relativePath })
+            assertEquals(1, report.outOfRootEntries)
+            assertTrue(report.errors.any { it.reason == "outside_root" })
+        } else {
+            // Windows without Developer Mode refuses symlink creation. The
+            // traversal guard is covered deterministically by the seam test
+            // above; here the containment helper is asserted directly. The real
+            // filesystem symlink case is delegated to the Task 26 device pass.
+            val rootDir = root.canonicalFile
+            assertTrue(RawPaths.isWithin(File(root, "inside.apk").canonicalFile, rootDir))
+            assertFalse(RawPaths.isWithin(File(outside, "outside.apk").canonicalFile, rootDir))
+            assertFalse(RawPaths.isWithin(outside.canonicalFile, rootDir))
+        }
+    }
+
+    @Test
+    fun `a declared root can never be deleted`() = runTest {
+        val root = newRoot()
+        writeFile(root, "inside.apk")
+        val gateway = gateway(root)
+        val source = gateway.sources().single()
+        val rootItem = itemFor(root, source, "application/octet-stream")
+
+        val result = gateway.deletePermanently(listOf(rootItem))
+
+        assertTrue(result is DeleteResult.Partial, "was $result")
+        assertEquals("refusing_to_delete_a_root", result.failures.single().reason)
+        assertTrue(root.exists(), "a declared root must survive (spec §6.3)")
+    }
+
+    @Test
+    fun `move refuses an unlistable destination instead of overwriting`() = runTest {
+        val root = newRoot()
+        val source = writeFile(root, "src.apk")
+        val destination = dir(root, "dest")
+        val gateway = RawStorageGateway(
+            roots = listOf(root),
+            hasAllFilesAccess = true,
+            listChildren = { directory ->
+                if (directory.name == "dest") null else directory.listFiles()?.toList()
+            },
+        )
+        val item = itemFor(source, gateway.sources().single(), "application/vnd.android.package-archive")
+
+        val result = gateway.move(item, Destination(gateway.sources().single(), relativePath = "dest"))
+
+        assertTrue(result is MoveResult.Failed, "was $result")
+        assertEquals("destination_unreadable", result.reason)
+        assertTrue(source.exists(), "the source must be untouched")
+        assertTrue(destination.exists())
     }
 }
