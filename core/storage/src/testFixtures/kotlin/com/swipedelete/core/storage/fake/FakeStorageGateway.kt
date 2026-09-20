@@ -36,7 +36,11 @@ import java.io.InputStream
  * It is the reference implementation of the gateway contract and the backbone
  * of the chaos tests (M0-T10): [beforeMove] and [faultInjector] let a test
  * suspend or fail an operation at a controlled point, and [quarantineContents]
- * / [fileExists] let a test observe exactly what was and was not moved.
+ * / [fileExists] let a test observe exactly what was and was not moved. Every
+ * mutating call and [capacity]/[openStream] additionally reports itself through
+ * [FaultInjector.beforeFakeOperation], so a test can count — and stop at — the
+ * exact primitive a batch reaches. That reporting is inert until a hook is
+ * armed, so it changes nothing for tests that do not use it.
  */
 class FakeStorageGateway(
     initialItems: List<MediaItem> = emptyList(),
@@ -147,6 +151,7 @@ class FakeStorageGateway(
     }
 
     override fun openStream(item: MediaItem): InputStream {
+        faultInjector.beforeFakeOperation(kind = null, label = "openStream")
         val content = item.path?.let { contents[it] }
         if (content != null) return ByteArrayInputStream(content)
         val size = (item.path?.let { files[it]?.sizeBytes } ?: item.sizeBytes)
@@ -156,6 +161,7 @@ class FakeStorageGateway(
     }
 
     override suspend fun move(item: MediaItem, destination: Destination): MoveResult {
+        faultInjector.beforeFakeOperation(kind = OpKind.MOVE, label = "move")
         val from = item.path ?: return MoveResult.Failed("item ${item.id.value} has no path")
         if (!files.containsKey(from)) return MoveResult.Failed("source not found: $from")
         beforeMove?.invoke(0)
@@ -167,6 +173,7 @@ class FakeStorageGateway(
     }
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+        faultInjector.beforeFakeOperation(kind = OpKind.QUARANTINE, label = "quarantine")
         val needed = items.sumOf { it.sizeBytes }
         val capacity = capacity()
         if (needed > capacity.freeBytes) {
@@ -192,6 +199,7 @@ class FakeStorageGateway(
     }
 
     override suspend fun restore(entry: JournalEntry): RestoreResult = mutex.withLock {
+        faultInjector.beforeFakeOperation(kind = OpKind.RESTORE, label = "restore")
         val original = entry.fromUri
         val quarantinedPath = entry.toUri
         if (files.containsKey(original)) {
@@ -212,6 +220,7 @@ class FakeStorageGateway(
     }
 
     override suspend fun deletePermanently(items: List<MediaItem>): DeleteResult = mutex.withLock {
+        faultInjector.beforeFakeOperation(kind = OpKind.DELETE_PERMANENT, label = "deletePermanently")
         val failures = ArrayList<Failure>()
         var deleted = 0
         items.forEach { item ->
@@ -227,6 +236,7 @@ class FakeStorageGateway(
     }
 
     override suspend fun capacity(): Capacity {
+        faultInjector.beforeFakeOperation(kind = null, label = "capacity")
         val used = files.values.sumOf { it.sizeBytes }
         return Capacity(
             totalBytes = TOTAL_BYTES,
