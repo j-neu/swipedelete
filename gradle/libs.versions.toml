@@ -22,6 +22,12 @@ composeBom = "2026.06.01"
 # transitively). Chosen over org.junit.Assert.* because the M0-T02 test source
 # uses the kotlin.test argument order (message last).
 
+# Coroutines
+# 1.11.0 is the newest stable release; it is built against Kotlin stdlib 2.2.20,
+# whose metadata is readable by the resolved Kotlin 2.3.21 toolchain (backward
+# compatible), and it is the version :core:common's DispatchersProvider exposes.
+coroutines = "1.11.0"
+
 # Processing / libraries later M0 tasks consume
 hilt = "2.60.1"
 room = "2.8.5"
@@ -32,6 +38,9 @@ paging = "3.5.1"
 
 [libraries]
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
+
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "coroutines" }
 
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
