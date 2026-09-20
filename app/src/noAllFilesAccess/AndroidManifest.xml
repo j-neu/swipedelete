@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Contingency build (`-PnoAllFilesAccess`, SPEC 4.4): the full manifest with the
+  MANAGE_EXTERNAL_STORAGE declaration removed and nothing else changed. Selected
+  by app/build.gradle.kts via the `noAllFilesAccess` Gradle property; task names
+  (`assembleDebug`, `testDebugUnitTest`) are unchanged, so this is a build flag,
+  not a second product. `AppManifestTest` asserts these two manifests stay in
+  parity apart from the one stripped permission.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Photo and video permissions (API 33+). Deliberately unnamed/narrowed by no
+         maxSdkVersion: media access is a first-class capability of the product. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+
+    <!-- V4 amendment: MediaStore reads on API 26-32 and MediaStore-mediated
+         deletion on API 26-28 need the legacy permissions. Without
+         WRITE_EXTERNAL_STORAGE a MediaStore media quarantine cannot complete on
+         API 26-28 (there is no consent flow at that band). -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- MANAGE_EXTERNAL_STORAGE is absent from this contingency build by design. -->
+
+    <!-- AC-6: zero network capability. No INTERNET permission is ever declared. -->
+
+    <application
+        android:name="com.swipedelete.app.SwipeDeleteApplication"
+        android:allowBackup="false"
+        android:label="SwipeDelete"
+        android:supportsRtl="true" />
+
+</manifest>

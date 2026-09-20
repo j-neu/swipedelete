@@ -1,5 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Photo and video permissions (API 33+). Deliberately unnamed/narrowed by no
+         maxSdkVersion: media access is a first-class capability of the product. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+
+    <!-- V4 amendment: MediaStore reads on API 26-32 and MediaStore-mediated
+         deletion on API 26-28 need the legacy permissions. Without
+         WRITE_EXTERNAL_STORAGE a MediaStore media quarantine cannot complete on
+         API 26-28 (there is no consent flow at that band). -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- All Files Access, used only for non-media file management (SPEC 4.2
+         condition 2). Play requires tools:ignore="ScopedStorage". Stripped by the
+         -PnoAllFilesAccess contingency build. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!-- AC-6: zero network capability. No INTERNET permission is ever declared. -->
 
     <application
         android:name="com.swipedelete.app.SwipeDeleteApplication"
