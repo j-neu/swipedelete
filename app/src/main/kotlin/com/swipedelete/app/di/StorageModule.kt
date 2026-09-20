@@ -14,6 +14,9 @@ import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.saf.PersistedGrantStore
 import com.swipedelete.core.storage.saf.SafStorageGateway
+import com.swipedelete.feature.settings.grants.ContentResolverGrantStore
+import com.swipedelete.feature.settings.grants.GrantMutator
+import com.swipedelete.feature.settings.grants.SourceGrantRepository
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -163,8 +166,34 @@ object StorageModule {
 
     @Provides
     @Singleton
-    fun providePersistedGrantStore(@ApplicationContext context: Context): PersistedGrantStore =
-        ContentResolverPersistedGrantStore(context)
+    fun provideGrantStore(@ApplicationContext context: Context): ContentResolverGrantStore =
+        ContentResolverGrantStore(context)
+
+    /**
+     * The **one** persisted-grant implementation (M0-T16). Both ports are bound to
+     * the same singleton, so the SAF gateway, the onboarding flow and the grants
+     * screen read and write one grant set; there is no second grant store in the
+     * app. The previous `:app`-local store was deleted when this was introduced.
+     */
+    @Provides
+    @Singleton
+    fun providePersistedGrantStore(store: ContentResolverGrantStore): PersistedGrantStore = store
+
+    @Provides
+    @Singleton
+    fun provideGrantMutator(store: ContentResolverGrantStore): GrantMutator = store
+
+    /**
+     * The app's grant policy: the 20-grant cap, order and revoke (SPEC 4.5, V2).
+     * It is Android-free, so it is the same class the host-JVM tests exercise.
+     */
+    @Provides
+    @Singleton
+    fun provideSourceGrantRepository(
+        grants: PersistedGrantStore,
+        mutator: GrantMutator,
+        clock: Clock,
+    ): SourceGrantRepository = SourceGrantRepository(grants = grants, mutator = mutator, clock = clock)
 
     /**
      * The quarantine root: `<app external files dir>/quarantine`, the same

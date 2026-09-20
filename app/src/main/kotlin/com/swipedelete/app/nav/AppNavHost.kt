@@ -14,20 +14,34 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.swipedelete.app.R
+import com.swipedelete.feature.settings.grants.GrantsRoute
+import com.swipedelete.feature.settings.onboarding.OnboardingRoute
 
 /**
- * The M0 app shell. Every route in [Destinations] is declared here; non-M0 routes
- * render [PlaceholderScreen] until M1 (deck/viewer/dashboard/quarantine/history)
- * and M0-T16 (onboarding) supply real screens.
+ * The M0 app shell. Every route in [Destinations] is declared here, in the order
+ * M0-T15 froze; `onboarding` and `settings` render the real screens (M0-T16),
+ * and the remaining M1 routes render [PlaceholderScreen] until they ship.
+ *
+ * [onboardingScreen] and [settingsScreen] are the composition seam that keeps the
+ * graph testable: the real screens own a `@HiltViewModel`, which needs a
+ * Hilt-enabled activity, while a route test only needs the graph. Production
+ * (and the defaults here) render the real screens; a test may substitute inert
+ * destinations. The factory of each `NavBackStackEntry` is a plain
+ * `SavedStateViewModelFactory`, so a `@HiltViewModel` is resolved through
+ * `hiltViewModel()` inside the route, not from the graph.
  */
 @Composable
 fun AppNavHost(
     navController: NavHostController = rememberNavController(),
     startDestination: String = Destinations.START,
+    onboardingScreen: @Composable (onFinished: () -> Unit) -> Unit = { onFinished ->
+        OnboardingRoute(onFinished = onFinished)
+    },
+    settingsScreen: @Composable () -> Unit = { GrantsRoute() },
 ) {
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Destinations.ONBOARDING) {
-            PlaceholderScreen(title = stringResource(R.string.nav_onboarding))
+            onboardingScreen { navController.navigate(Destinations.DECK) }
         }
         composable(Destinations.DECK) {
             PlaceholderScreen(title = stringResource(R.string.nav_deck))
@@ -48,7 +62,7 @@ fun AppNavHost(
             PlaceholderScreen(title = stringResource(R.string.nav_history))
         }
         composable(Destinations.SETTINGS) {
-            PlaceholderScreen(title = stringResource(R.string.nav_settings))
+            settingsScreen()
         }
     }
 }

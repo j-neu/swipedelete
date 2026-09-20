@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Onboarding and grant-management copy (SPEC 4.5). Every user-facing literal in
+  :feature:settings comes from here; the screens pass these ids to `stringResource`
+  and never inline a string.
+
+  The onboarding copy is deliberately plain: the folder picker *is* the app's
+  first permission request (there is no separate permission wall), and the flow
+  states up front that it can be skipped (AC-19).
+-->
+<resources>
+    <!-- Onboarding: "pick your five folders" -->
+    <string name="onboarding_title">Pick up to five folders</string>
+    <string name="onboarding_body">Files you move land in these folders. This is read and write access to the folders you pick, and nothing else. You can skip this and add folders later.</string>
+    <string name="onboarding_slot_count">%1$d of %2$d folders chosen</string>
+    <string name="onboarding_slot_add">Choose folder</string>
+    <string name="onboarding_slot_remove">Remove</string>
+    <string name="onboarding_slot_remove_named">Remove %1$s</string>
+    <string name="onboarding_slot_limit">Five folders is the maximum here. Remove one to add another.</string>
+    <string name="onboarding_skip">Skip for now</string>
+    <string name="onboarding_done">Done</string>
+    <string name="onboarding_error_grant_denied">That folder could not be added. Try a different folder.</string>
+    <string name="onboarding_error_grant_cap">You have reached the limit of %1$d granted folders. Revoke one in Settings to add another.</string>
+
+    <!-- Settings: grants and the five slots -->
+    <string name="grants_title">Folders and access</string>
+    <string name="grants_body">Every folder you granted, with one-tap revoke. Revoking only removes the app\'s access; no files are deleted.</string>
+    <string name="grants_cap_usage">%1$d of %2$d grants used</string>
+    <string name="grants_empty_title">No folders granted</string>
+    <string name="grants_empty_body">You can use SwipeDelete without granting any folder. Add one when you need it.</string>
+    <string name="grants_revoke_label">Revoke</string>
+    <string name="grants_revoke_named">Revoke access to %1$s</string>
+    <string name="grants_access_read">Read only</string>
+    <string name="grants_access_write">Read and write</string>
+    <string name="grants_slots_title">Your five folders</string>
+    <string name="grants_slot_empty">Not set</string>
+</resources>

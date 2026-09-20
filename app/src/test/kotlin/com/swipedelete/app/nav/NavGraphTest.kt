@@ -32,7 +32,15 @@ class NavGraphTest {
 
         composeTestRule.setContent {
             SwipeDeleteTheme {
-                AppNavHost(navController = navController)
+                AppNavHost(
+                    navController = navController,
+                    // The real screens own a @HiltViewModel, which needs a
+                    // Hilt-enabled activity; this test asserts the graph, so it
+                    // substitutes inert destinations for the two real screens
+                    // rather than weakening any assertion below.
+                    onboardingScreen = {},
+                    settingsScreen = {},
+                )
             }
         }
         composeTestRule.waitForIdle()

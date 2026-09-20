@@ -58,6 +58,9 @@ dependencies {
     implementation(project(":core:database"))
     implementation(project(":core:storage"))
     implementation(project(":core:designsystem"))
+    // M0-T16: the onboarding and grants/slots screens, and the one grant store
+    // (read + write ports) :app's Hilt graph binds.
+    implementation(project(":feature:settings"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

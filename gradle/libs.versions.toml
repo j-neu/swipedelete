@@ -71,6 +71,19 @@ coil = "3.6.3"
 work = "2.11.2"
 paging = "3.5.1"
 
+# M0-T16 (:feature:settings). A @HiltViewModel is not resolvable from inside a
+# NavHost destination with plain `viewModel()`: NavBackStackEntry's default
+# factory is a bare SavedStateViewModelFactory (verified against
+# navigation-common 2.9.8's NavBackStackEntryImpl), not the activity's Hilt
+# factory. androidx.hilt's navigation-compose integration supplies the one that
+# is, so the onboarding/settings routes can own their @HiltViewModel.
+# 1.2.0 is the newest stable androidx.hilt release; it is version-independent of
+# the Dagger hilt = "2.58" pin above.
+hiltNavigationCompose = "1.2.0"
+# Lifecycle artifacts consumed by :feature:settings' view models and screens.
+# 2.9.4 is the release navigation 2.9.8 resolves against in this project.
+lifecycle = "2.9.4"
+
 [libraries]
 kotlin-test-junit = { group = "org.jetbrains.kotlin", name = "kotlin-test-junit", version.ref = "kotlin" }
 
@@ -102,6 +115,11 @@ androidx-activity-compose = { group = "androidx.activity", name = "activity-comp
 
 hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref = "hilt" }
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
+
+androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
+androidx-lifecycle-viewmodel-compose = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-compose", version.ref = "lifecycle" }
+androidx-lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle" }
+androidx-lifecycle-runtime-compose = { group = "androidx.lifecycle", name = "lifecycle-runtime-compose", version.ref = "lifecycle" }
 
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }

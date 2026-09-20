@@ -117,9 +117,11 @@ class StorageGraphOrderTest {
     /** 3. One quarantine store, owned by the Quarantine layer; the concrete gateway holds none. */
     @Test
     fun `the graph contains exactly one quarantine store and the concrete gateways hold none`() {
+        // The same provider the Hilt graph uses, so this cannot drift from
+        // production wiring: one persisted-grant store (M0-T16).
         val concrete = StorageModule.provideConcreteGateway(
             context = context,
-            persisted = ContentResolverPersistedGrantStore(context),
+            persisted = StorageModule.provideGrantStore(context),
         )
 
         // The concrete gateway must not own a second quarantine root: its store is
