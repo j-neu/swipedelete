@@ -14,6 +14,7 @@ import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.saf.PersistedGrantStore
 import com.swipedelete.core.storage.saf.SafStorageGateway
+import com.swipedelete.core.storage.scan.SourceScanPort
 import com.swipedelete.feature.settings.grants.ContentResolverGrantStore
 import com.swipedelete.feature.settings.grants.GrantMutator
 import com.swipedelete.feature.settings.grants.SourceGrantRepository
@@ -135,22 +136,32 @@ fun assembleStorageGraph(
  * would make it injectable, and so would binding the store.
  *
  * This handle is therefore the exchange type, and its surface is deliberately
- * limited to the two entry points that are already legitimately injectable:
+ * limited to the three entry points that are legitimately injectable:
  *
  * - [gateway] — the outermost decorator, so every mutating call passes
  *   `ProtectedRoots → Journaling → Quarantine` first;
- * - [reconciler] — the startup pass, which owns its own per-row reasoning.
+ * - [reconciler] — the startup pass, which owns its own per-row reasoning;
+ * - [scanPort] — the **read-only** `SourceScanPort` for scan progress and
+ *   truncation (M1-T01a/D1). It is not a decorator and never mutates, so it
+ *   does not reopen the AC-1/AC-7 bypass this handle closes; the concrete
+ *   gateway is constructed inside the provider and only its read-only scan
+ *   capability is handed out.
  *
  * It exposes neither [QuarantineStore] nor [StorageGraph]. Nothing can inject the
  * store and call `store()`/`restore()`/`scan()` behind the write-ahead journal
  * (AC-1), and nothing can reach the store through this type. Injecting the handle
- * yields no capability that [StorageGateway] and [Reconciler] do not already
- * provide individually.
+ * yields no mutating capability that [StorageGateway] and [Reconciler] do not
+ * already provide individually.
  */
 class StorageGraphHandle internal constructor(
     /** The outermost decorator stack; the only sanctioned mutating entry point. */
     val gateway: StorageGateway,
     val reconciler: Reconciler,
+    /**
+     * The read-only scan port, or `null` when the concrete gateway cannot scan
+     * (e.g. a future MediaStore-only build). Never a mutating capability.
+     */
+    val scanPort: SourceScanPort?,
 )
 
 @Module
@@ -264,7 +275,14 @@ object StorageModule {
             // then nothing is unlocked and no item is a source root.
             unlocked = { emptySet() },
         )
-        return StorageGraphHandle(gateway = graph.gateway, reconciler = graph.reconciler)
+        return StorageGraphHandle(
+            gateway = graph.gateway,
+            reconciler = graph.reconciler,
+            // The concrete gateway is constructed here and never bound (finding 1);
+            // only its read-only scan capability is handed out. `as?` keeps the
+            // handle honest for a future concrete gateway that cannot scan.
+            scanPort = concrete as? SourceScanPort,
+        )
     }
 
     @Provides

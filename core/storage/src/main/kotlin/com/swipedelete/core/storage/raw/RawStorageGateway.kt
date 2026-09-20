@@ -24,6 +24,8 @@ import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.saf.SafStorageGateway
+import com.swipedelete.core.storage.scan.ScanPage
+import com.swipedelete.core.storage.scan.SourceScanPort
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -169,7 +171,7 @@ class RawStorageGateway(
     private val maxDepth: Int = DEFAULT_MAX_DEPTH,
     private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
     private val readBytes: (File) -> ByteArray? = RawMediaPolicy::readLeadingBytes,
-) : StorageGateway, ItemLocator {
+) : StorageGateway, ItemLocator, SourceScanPort {
 
     private val canonicalRoots: List<File>
     private val sourceRefs: List<SourceRef>
@@ -193,8 +195,8 @@ class RawStorageGateway(
     /**
      * The frozen page view of a raw scan: media is skipped (AC-10) and a single
      * page is emitted because the raw gateway does not page. Callers that need
-     * truncation / error / skipped-media counts use [scan]; the frozen signature
-     * cannot carry them (§9.4, parked for M1 by Task 20).
+     * truncation / error / skipped-media counts use [scan(SourceRef)]; the frozen
+     * signature cannot carry them (§9.4, parked for M1 by Task 20).
      */
     override fun enumerate(source: SourceRef, page: PageToken?): Flow<Page<MediaItem>> = flow {
         emit(Page(scan(source).items, null))
@@ -204,7 +206,9 @@ class RawStorageGateway(
      * The honest raw scan behind [enumerate]: bounded, media-excluding, and
      * explicit about truncation and unreadable directories.
      */
-    suspend fun scan(source: SourceRef): RawScanReport {
+    suspend fun scan(source: SourceRef): RawScanReport = scanReport(source)
+
+    private suspend fun scanReport(source: SourceRef): RawScanReport {
         val root = rootFor(source)
             ?: return RawScanReport(
                 source = source,
@@ -306,6 +310,26 @@ class RawStorageGateway(
             maxDepth = maxDepthSeen,
             truncated = truncated,
             errors = errors,
+        )
+    }
+
+    /**
+     * [SourceScanPort]: the read-only view of the raw scan report above, in the
+     * shape the frozen `Page`/`enumerate` cannot carry. The raw walk does not
+     * page, so a single [ScanPage] is emitted with [ScanPage.next] `null` and any
+     * supplied `page` is ignored (the raw walk produces no continuation token);
+     * the report's `truncated` / `entriesScanned` become the port's progress
+     * fields. It yields exactly the items [enumerate] yields and touches nothing.
+     */
+    override fun scan(source: SourceRef, page: PageToken?): Flow<ScanPage> = flow {
+        val report = scanReport(source)
+        emit(
+            ScanPage(
+                items = report.items,
+                next = null,
+                truncated = report.truncated,
+                scanned = report.entriesScanned,
+            ),
         )
     }
 
