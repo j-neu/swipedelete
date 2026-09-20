@@ -22,6 +22,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
@@ -66,6 +67,10 @@ class QuarantineRestoreTest {
 
         assertTrue(restore is RestoreResult.Restored, "expected Restored but was $restore")
         assertContentEquals(original, File(item.path!!).readBytes())
+        assertFalse(
+            QuarantineLayout.restoreTempFor(File(item.path!!)).exists(),
+            "the restore temp must be renamed away, not left behind",
+        )
     }
 
     @Test
@@ -89,6 +94,28 @@ class QuarantineRestoreTest {
         assertNotEquals(mismatch.expected, mismatch.actual)
         assertFalse(File(item.path!!).exists(), "the original path must stay empty")
         assertTrue(quarantined.isFile, "the quarantined file must be kept, never dropped")
+    }
+
+    @Test
+    fun `restore refuses a sidecar with no usable original path`() = runTest {
+        val h = newHarness()
+        val item = h.item("Memes/a.gif", "pathless".toByteArray())
+        val entry = h.quarantine(item)
+        val quarantined = File(entry.toUri!!)
+        val sidecarFile = QuarantineLayout.sidecarFor(quarantined)
+        val stored = SidecarCodec.decode(sidecarFile.readText())
+        // A MediaStore/SAF-only original: a content URI and no raw filesystem path.
+        sidecarFile.writeText(SidecarCodec.encode(stored.copy(originalPath = null)))
+        val quarantinedBytes = quarantined.readBytes()
+
+        val restore = h.gateway.restore(entry)
+
+        assertFalse(restore is RestoreResult.Restored, "a pathless original must never be reported restored")
+        assertTrue(restore is RestoreResult.Conflict, "the refusal must be explicit but was $restore")
+        assertTrue(quarantined.isFile, "the quarantined copy must survive the refusal")
+        assertContentEquals(quarantinedBytes, quarantined.readBytes())
+        assertTrue(sidecarFile.isFile, "the sidecar must survive the refusal")
+        assertFalse(File(item.path!!).exists(), "no file may be written for a pathless original")
     }
 
     @Test
@@ -181,6 +208,29 @@ class QuarantineRestoreTest {
         assertEquals(item.sourceId.value, sidecar.sourceId)
         assertEquals(42L, sidecar.mediaStoreId)
         assertTrue(sidecar.expiresAt > NOW, "expiry must be in the future")
+    }
+
+    @Test
+    fun `a failed restore write leaves no partial target and keeps the quarantine copy`() = runTest {
+        val h = newHarness()
+        val item = h.item("Dir/a.gif", "needs a parent".toByteArray())
+        val entry = h.quarantine(item)
+        val quarantined = File(entry.toUri!!)
+        val sidecarFile = QuarantineLayout.sidecarFor(quarantined)
+        // Occupy the original's parent with a regular file so the write fails
+        // partway through the restore.
+        File(h.base, "Dir").writeBytes("not a directory".toByteArray())
+        val target = File(item.path!!)
+
+        assertFailsWith<QuarantineException> { h.gateway.restore(entry) }
+
+        assertFalse(target.exists(), "no partial target may be left behind")
+        assertFalse(
+            QuarantineLayout.restoreTempFor(target).exists(),
+            "no restore temp may be left behind",
+        )
+        assertTrue(quarantined.isFile, "the quarantined copy must be intact")
+        assertTrue(sidecarFile.isFile, "the sidecar must be intact")
     }
 
     @Test

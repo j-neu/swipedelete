@@ -15,12 +15,18 @@ import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.FileAlreadyExistsException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 
 /** A quarantined file, its journal entry and its decoded sidecar. */
@@ -85,9 +91,10 @@ class QuarantineStore(
         sessionId: SessionId? = null,
         cause: String? = null,
         category: String? = null,
-    ): JournalEntry {
+    ): JournalEntry = withContext(Dispatchers.IO) {
         val destination = QuarantineLayout.target(root, batch, item)
         val sidecarFile = QuarantineLayout.sidecarFor(destination)
+        val sidecarTemp = QuarantineLayout.tempFileFor(sidecarFile)
         val now = clock.nowMillis()
 
         val (written, digestHex) = copyAndVerify(item, destination)
@@ -128,20 +135,29 @@ class QuarantineStore(
             state = entry.state.name,
         )
 
-        // The sidecar is written before the original is deleted: if the process
-        // dies here both copies exist (a duplicate, never a loss).
+        // The sidecar is staged to a temp file and renamed, and written before
+        // the original is deleted: if the process dies here both copies exist
+        // and the sidecar is fully present or absent, never torn (a torn sidecar
+        // would make the data file invisible to scan()/restore).
         try {
             destination.parentFile?.mkdirs()
-            sidecarFile.writeText(SidecarCodec.encode(sidecar))
+            sidecarTemp.writeText(SidecarCodec.encode(sidecar))
+            replaceAtomically(sidecarTemp, sidecarFile)
         } catch (cancelled: CancellationException) {
+            sidecarTemp.delete()
+            sidecarFile.delete()
             destination.delete()
             throw cancelled
         } catch (error: Error) {
+            sidecarTemp.delete()
+            sidecarFile.delete()
             destination.delete()
             throw error
         } catch (error: Throwable) {
+            sidecarTemp.delete()
+            sidecarFile.delete()
             destination.delete()
-            throw QuarantineException("sidecar_write_failed", error)
+            throw QuarantineException(SIDECAR_WRITE_FAILED, error)
         }
 
         // Delete the original last, and only after a verified copy is in place.
@@ -158,7 +174,7 @@ class QuarantineStore(
             // Keep the verified copy: V3 says report failed-with-copy-present.
             throw QuarantineException("original_delete_failed")
         }
-        return entry
+        entry
     }
 
     /**
@@ -166,58 +182,80 @@ class QuarantineStore(
      * only then is the original path checked for occupancy. A mismatch or a
      * conflict touches nothing.
      */
-    suspend fun restore(entry: JournalEntry): RestoreResult {
+    suspend fun restore(entry: JournalEntry): RestoreResult = withContext(Dispatchers.IO) {
         val quarantinedPath = entry.toUri
         val quarantined = quarantinedPath?.let(::File)
         if (quarantined == null || !quarantined.isFile) {
-            return RestoreResult.Conflict(entry.fromUri, quarantinedPath.orEmpty())
+            return@withContext RestoreResult.Conflict(entry.fromUri, quarantinedPath.orEmpty())
         }
         val sidecarFile = QuarantineLayout.sidecarFor(quarantined)
         if (!sidecarFile.isFile) {
-            return RestoreResult.Conflict(entry.fromUri, quarantined.absolutePath)
+            return@withContext RestoreResult.Conflict(entry.fromUri, quarantined.absolutePath)
         }
         val sidecar = try {
             SidecarCodec.decode(sidecarFile.readText())
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Throwable) {
-            return RestoreResult.Conflict(entry.fromUri, sidecarFile.absolutePath)
+            return@withContext RestoreResult.Conflict(entry.fromUri, sidecarFile.absolutePath)
         }
 
         val actual = hasher.sha256(quarantined.inputStream())
         if (actual != sidecar.sha256) {
-            return RestoreResult.HashMismatch(sidecar.sha256, actual)
+            return@withContext RestoreResult.HashMismatch(sidecar.sha256, actual)
         }
 
-        val targetPath = sidecar.originalPath ?: sidecar.originalUri
+        // A raw, absolute filesystem path is required. A content-URI-only
+        // original (MediaStore/SAF) has no `originalPath`; falling back to the
+        // URI would write to a bogus relative location and then delete the last
+        // remaining copy. Refuse instead — URI-based restore is M1-T01's job.
+        val targetPath = sidecar.originalPath
+        if (targetPath.isNullOrBlank() || !File(targetPath).isAbsolute) {
+            return@withContext RestoreResult.Conflict(
+                targetPath ?: sidecar.originalUri,
+                NO_ORIGINAL_PATH,
+            )
+        }
         val target = File(targetPath)
         if (target.exists()) {
-            return RestoreResult.Conflict(targetPath, target.absolutePath)
+            return@withContext RestoreResult.Conflict(targetPath, target.absolutePath)
         }
 
+        // Crash-safe and race-free: write beside the target, then rename into
+        // place. A death mid-write leaves only the temp file, never a partial
+        // target that would block every future restore with a Conflict.
+        val temp = QuarantineLayout.restoreTempFor(target)
         try {
             target.parentFile?.mkdirs()
             quarantined.inputStream().use { input ->
-                target.outputStream().use { output -> input.copyTo(output) }
+                FileOutputStream(temp).use { output -> input.copyTo(output) }
+            }
+            // Re-check immediately before the rename: a file created since the
+            // check above must never be overwritten (AC-17).
+            if (target.exists() || !promoteIfAbsent(temp, target)) {
+                temp.delete()
+                return@withContext RestoreResult.Conflict(targetPath, target.absolutePath)
             }
         } catch (cancelled: CancellationException) {
-            target.delete()
+            temp.delete()
             throw cancelled
         } catch (error: Error) {
-            target.delete()
+            temp.delete()
             throw error
         } catch (error: Throwable) {
-            target.delete()
-            throw QuarantineException("restore_write_failed", error)
+            temp.delete()
+            throw QuarantineException(RESTORE_WRITE_FAILED, error)
         }
 
         quarantined.delete()
         sidecarFile.delete()
-        return RestoreResult.Restored(targetPath)
+        RestoreResult.Restored(targetPath)
     }
 
     /** The current quarantined set, read from the sidecars under [root]. */
-    fun contents(): Flow<List<QuarantineEntry>> = flow { emit(scan()) }
+    fun contents(): Flow<List<QuarantineEntry>> = flow {
+        emit(withContext(Dispatchers.IO) { scan() })
+    }
 
     /** A one-shot scan of the quarantine root. Missing sidecars are skipped. */
     fun scan(): List<QuarantineEntry> {
@@ -243,7 +281,12 @@ class QuarantineStore(
             return if (allowPermanent) {
                 QuarantineResult.Quarantined(batch, emptyList())
             } else {
-                QuarantineResult.Partial(emptyList(), emptyList())
+                // Even an empty/absent batch must produce an explicit refusal,
+                // never a reasonless Partial that reads like success.
+                QuarantineResult.Partial(
+                    emptyList(),
+                    listOf(Failure(ItemId(batch.value), PERMANENT_REFUSED)),
+                )
             }
         }
         // The layout nests the original relative path, so the batch directory
@@ -279,48 +322,77 @@ class QuarantineStore(
      * length and its SHA-256 to match. On any mismatch the partial copy is
      * removed and the original is never touched (AC-15).
      */
-    private suspend fun copyAndVerify(item: MediaItem, destination: File): Pair<Long, String> {
-        var written = 0L
-        val digest = MessageDigest.getInstance("SHA-256")
-        try {
-            destination.parentFile?.mkdirs()
-            gateway.openStream(item).use { input ->
-                FileOutputStream(destination).use { output ->
-                    val buffer = ByteArray(CHUNK_SIZE)
-                    while (true) {
-                        // Bounded chunks plus a cancellation check at every
-                        // boundary: a cancelled copy stops before the original
-                        // is deleted.
-                        currentCoroutineContext().ensureActive()
-                        val read = input.read(buffer)
-                        if (read < 0) break
-                        if (read == 0) continue
-                        digest.update(buffer, 0, read)
-                        output.write(buffer, 0, read)
-                        written += read
+    private suspend fun copyAndVerify(item: MediaItem, destination: File): Pair<Long, String> =
+        withContext(Dispatchers.IO) {
+            var written = 0L
+            val digest = MessageDigest.getInstance("SHA-256")
+            try {
+                destination.parentFile?.mkdirs()
+                gateway.openStream(item).use { input ->
+                    FileOutputStream(destination).use { output ->
+                        val buffer = ByteArray(CHUNK_SIZE)
+                        while (true) {
+                            // Bounded chunks plus a cancellation check at every
+                            // boundary: a cancelled copy stops before the original
+                            // is deleted.
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            if (read == 0) continue
+                            digest.update(buffer, 0, read)
+                            output.write(buffer, 0, read)
+                            written += read
+                        }
+                        output.flush()
                     }
-                    output.flush()
                 }
-            }
-            val sourceHash = digest.digest().toHex()
-            val destinationHash = hasher.sha256(destination.inputStream())
-            if (destination.length() != written || destinationHash != sourceHash) {
+                val sourceHash = digest.digest().toHex()
+                val destinationHash = hasher.sha256(destination.inputStream())
+                if (destination.length() != written || destinationHash != sourceHash) {
+                    destination.delete()
+                    throw QuarantineException(VERIFICATION_FAILED)
+                }
+                written to sourceHash
+            } catch (cancelled: CancellationException) {
                 destination.delete()
-                throw QuarantineException(VERIFICATION_FAILED)
+                throw cancelled
+            } catch (error: QuarantineException) {
+                throw error
+            } catch (error: Error) {
+                destination.delete()
+                throw error
+            } catch (error: Throwable) {
+                destination.delete()
+                throw QuarantineException("copy_failed", error)
             }
-            return written to sourceHash
-        } catch (cancelled: CancellationException) {
-            destination.delete()
-            throw cancelled
-        } catch (error: QuarantineException) {
-            throw error
-        } catch (error: Error) {
-            destination.delete()
-            throw error
-        } catch (error: Throwable) {
-            destination.delete()
-            throw QuarantineException("copy_failed", error)
         }
+
+    /** Atomically moves [source] onto [target], replacing any existing file. */
+    private fun replaceAtomically(source: File, target: File) {
+        try {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (unsupported: AtomicMoveNotSupportedException) {
+            Files.move(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+        }
+    }
+
+    /**
+     * Atomically moves [source] onto [target] **only if [target] is still
+     * absent**, so a file created since the last occupancy check can never be
+     * overwritten (AC-17). Returns false when [target] now exists.
+     */
+    private fun promoteIfAbsent(source: File, target: File): Boolean = try {
+        Files.move(source.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        true
+    } catch (unsupported: AtomicMoveNotSupportedException) {
+        try {
+            Files.move(source.toPath(), target.toPath())
+            true
+        } catch (exists: FileAlreadyExistsException) {
+            false
+        }
+    } catch (exists: FileAlreadyExistsException) {
+        false
     }
 
     private fun readEntry(sidecarFile: File): QuarantineEntry? {
@@ -364,6 +436,19 @@ class QuarantineStore(
 
         /** Reason recorded when the copy does not match the source. */
         const val VERIFICATION_FAILED: String = "verification_failed"
+
+        /** Reason recorded when the sidecar could not be staged and renamed. */
+        const val SIDECAR_WRITE_FAILED: String = "sidecar_write_failed"
+
+        /** Reason recorded when the restored bytes could not be placed. */
+        const val RESTORE_WRITE_FAILED: String = "restore_write_failed"
+
+        /**
+         * Reason recorded when the sidecar carries no raw absolute original
+         * path (a MediaStore/SAF-only source); restore refuses rather than
+         * writing to a bogus location and dropping the last copy.
+         */
+        const val NO_ORIGINAL_PATH: String = "no_raw_original_path"
     }
 }
 

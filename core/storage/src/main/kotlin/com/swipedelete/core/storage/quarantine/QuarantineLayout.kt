@@ -18,6 +18,12 @@ object QuarantineLayout {
     /** Suffix of the sidecar written next to every quarantined file. */
     const val SIDECAR_SUFFIX: String = ".swipedelete.json"
 
+    /** Suffix of the temporary file a sidecar (or any store file) is staged in. */
+    const val TEMP_SUFFIX: String = ".part"
+
+    /** Suffix of the temporary file restore writes beside the target before renaming. */
+    const val RESTORE_TEMP_SUFFIX: String = ".swipedelete.restore.part"
+
     /** The directory holding one quarantine batch. */
     fun batchDir(root: File, batch: BatchId): File = File(root, batch.value)
 
@@ -42,6 +48,12 @@ object QuarantineLayout {
     /** The quarantined data file described by [sidecar]. */
     fun dataFileFor(sidecar: File): File =
         File(sidecar.parentFile, sidecar.name.removeSuffix(SIDECAR_SUFFIX))
+
+    /** The staging file [file] is written to before being renamed into place. */
+    fun tempFileFor(file: File): File = File(file.parentFile, file.name + TEMP_SUFFIX)
+
+    /** The staging file restore writes beside [target] before renaming it into place. */
+    fun restoreTempFor(target: File): File = File(target.parentFile, target.name + RESTORE_TEMP_SUFFIX)
 
     /**
      * Normalises a relative path, dropping empty, `.` and `..` segments so a
