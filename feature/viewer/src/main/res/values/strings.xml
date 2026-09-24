@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Viewer chrome (SPEC 5.4, decision 5). The dock is reached through a
+         button, never by dragging down; the button is the accessible path to
+         the non-destructive slot actions. -->
+    <string name="viewer_action_open_dock">Move to slot</string>
+    <string name="viewer_cd_dismiss">Dismiss viewer</string>
+
+    <!-- Image viewer. The image itself is decorative once its provenance is
+         spoken elsewhere, so only the gesture hint would need one; the bitmap
+         carries the full-resolution description instead. -->
+    <string name="viewer_cd_image">Full-resolution image</string>
+
+    <!-- Animated image transport (SPEC 5.4: animated GIF/WebP plays and loops,
+         with play/pause). -->
+    <string name="viewer_action_play">Play</string>
+    <string name="viewer_action_pause">Pause</string>
+
+    <!-- Audio transport (SPEC 5.4: transport controls, duration, metadata). -->
+    <string name="viewer_audio_position_of_duration">%1$s / %2$s</string>
+</resources>
