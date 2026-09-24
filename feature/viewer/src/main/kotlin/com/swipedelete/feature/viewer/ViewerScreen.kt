@@ -72,10 +72,23 @@ object ViewerDismiss {
 }
 
 /**
+ * How the viewer renders an item, chosen from its MIME. Kept as a pure
+ * function so the dispatch decision is testable without a Compose rule.
+ */
+enum class ViewerContentKind { IMAGE, ANIMATED_IMAGE, AUDIO, VIDEO }
+
+fun viewerContentKind(mime: String): ViewerContentKind = when {
+    mime.startsWith("video/") -> ViewerContentKind.VIDEO
+    mime.startsWith("audio/") -> ViewerContentKind.AUDIO
+    mime == "image/gif" || mime == "image/webp" -> ViewerContentKind.ANIMATED_IMAGE
+    else -> ViewerContentKind.IMAGE
+}
+
+/**
  * SPEC 5.4: the viewer. Horizontal paging between deck items, swipe-down
  * dismissal, and a **button** for the slot dock (decision 5). Content is
- * dispatched by MIME: still images, animated images and audio are in this
- * task's scope; video (Task 37) and APK/unsupported (Task 38) are not.
+ * dispatched by MIME: still images, animated images, audio and video are in
+ * M1's scope; APK/document/unsupported handling is Task 38.
  */
 @Composable
 fun ViewerScreen(
@@ -88,6 +101,7 @@ fun ViewerScreen(
     imageLoader: ImageLoader = AndroidImageLoader,
     gifLoader: GifLoader = AndroidGifLoader,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    videoContent: @Composable (MediaItem) -> Unit = { VideoViewer(item = it) },
 ) {
     if (pager.items.isEmpty()) return
 
@@ -123,6 +137,7 @@ fun ViewerScreen(
                 imageLoader = imageLoader,
                 gifLoader = gifLoader,
                 ioDispatcher = ioDispatcher,
+                videoContent = videoContent,
             )
         }
 
@@ -148,11 +163,14 @@ private fun ViewerContent(
     imageLoader: ImageLoader,
     gifLoader: GifLoader,
     ioDispatcher: CoroutineDispatcher,
+    videoContent: @Composable (MediaItem) -> Unit,
 ) {
-    when {
-        item.mime.startsWith("audio/") -> AudioViewer(item)
+    when (viewerContentKind(item.mime)) {
+        ViewerContentKind.VIDEO -> videoContent(item)
 
-        item.mime == "image/gif" || item.mime == "image/webp" -> GifViewer(
+        ViewerContentKind.AUDIO -> AudioViewer(item)
+
+        ViewerContentKind.ANIMATED_IMAGE -> GifViewer(
             item = item,
             openStream = openStream,
             loader = gifLoader,
@@ -167,7 +185,7 @@ private fun ViewerContent(
             },
         )
 
-        else -> ImageViewer(
+        ViewerContentKind.IMAGE -> ImageViewer(
             item = item,
             openStream = openStream,
             loader = imageLoader,

@@ -10,6 +10,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -64,4 +65,10 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     // MediaItem fixtures for the viewer tests come from the gateway fake.
     testImplementation(testFixtures(project(":core:storage")))
+
+    // Device-only pass for the real ExoPlayer state transitions (Task 37).
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }
