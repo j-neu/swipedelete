@@ -21,6 +21,8 @@ import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import com.swipedelete.core.storage.scan.ScanPage
+import com.swipedelete.core.storage.scan.SourceScanPort
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -40,8 +42,9 @@ import java.io.InputStream
  * - [sources] returns the persisted grants ([PersistedGrantStore]).
  * - [enumerate] is a paged, cancellable, resumable walk of a granted tree
  *   (spec §9.4). Callers that need the honest progress — truncation, unreadable
- *   entries — use [enumerateDetailed]; the frozen [StorageGateway] page cannot
- *   carry it.
+ *   entries — use [enumerateDetailed], or the read-only [scan] port that carries
+ *   the same progress through the assembled graph (D1); the frozen
+ *   [StorageGateway] page cannot carry it.
  * - [move] is copy-then-delete inside (or between) granted trees, because SAF
  *   has no raw rename and `DocumentsContract.moveDocument` gives no O(1)
  *   guarantee (V3). It checks for a name collision *before* writing and picks
@@ -71,7 +74,7 @@ class SafStorageGateway(
     private val access: DocumentTreeAccess = SafDocumentsContractAccess(context),
     private val walker: DocumentTreeWalker = DocumentTreeWalker(access),
     private val quarantineStore: QuarantineStore? = null,
-) : StorageGateway, ItemLocator {
+) : StorageGateway, ItemLocator, SourceScanPort {
 
     /**
      * The volume [capacity] reports on. The quarantine root belongs to the
@@ -88,6 +91,21 @@ class SafStorageGateway(
     /** [enumerate] with the honest per-page progress the frozen interface cannot carry. */
     fun enumerateDetailed(source: SourceRef, page: PageToken? = null): Flow<WalkPage> =
         walker.walk(source, SafUri.treeDocumentId(source.treeUri), page)
+
+    /**
+     * [SourceScanPort]: the read-only view of [enumerateDetailed], exposing the
+     * walker's truncation flag and cumulative entry count. It yields the same
+     * items as the frozen [enumerate] and touches nothing.
+     */
+    override fun scan(source: SourceRef, page: PageToken?): Flow<ScanPage> =
+        enumerateDetailed(source, page).map { walked ->
+            ScanPage(
+                items = walked.items,
+                next = walked.next,
+                truncated = walked.progress.truncated,
+                scanned = walked.progress.entriesScanned,
+            )
+        }
 
     override suspend fun metadata(item: MediaItem): Metadata {
         val source = sourceFor(item) ?: throw FileNotFoundException("unknown source ${item.sourceId.value}")

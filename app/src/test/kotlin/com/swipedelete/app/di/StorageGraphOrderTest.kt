@@ -23,6 +23,7 @@ import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.saf.SafStorageGateway
+import com.swipedelete.core.storage.scan.SourceScanPort
 import dagger.Binds
 import dagger.Provides
 import java.io.File
@@ -145,6 +146,15 @@ class StorageGraphOrderTest {
             "SafStorageGateway must be constructed with quarantineStore = null; the Quarantine layer owns the store",
         )
 
+        // The handle's read-only scan port is the concrete gateway itself: it
+        // cannot mutate, so it adds a capability without reopening the AC-1/AC-7
+        // bypass. (The full surface assertion is in the next test.)
+        assertSame(
+            concrete,
+            handle.scanPort,
+            "the handle's scan port must be the concrete gateway (read-only, not a decorator)",
+        )
+
         // The decorator and the reconciler share the one store instance and its root.
         val decoratorStore = field(quarantineLayer, "store") as QuarantineStore
         val reconcilerStore = field(handle.reconciler, "quarantine") as QuarantineStore
@@ -205,16 +215,19 @@ class StorageGraphOrderTest {
         )
 
         // The only thing shared between the gateway and reconciler providers is the
-        // provider-local handle, and its surface is exactly the two sanctioned
+        // provider-local handle, and its surface is exactly the three sanctioned
         // entry points — never the store, never the graph, never a concrete gateway.
+        // The scan port is read-only: it carries scan progress/truncation (D1) and
+        // cannot mutate or journal, so it does not reopen the AC-1/AC-7 bypass the
+        // two mutating entry points are limited to.
         val exposed = StorageGraphHandle::class.java.declaredMethods
             .filter { method -> method.parameterCount == 0 && method.name.startsWith("get") }
             .map { method -> method.returnType }
             .toSet()
         assertEquals(
-            setOf(StorageGateway::class.java, Reconciler::class.java),
+            setOf(StorageGateway::class.java, Reconciler::class.java, SourceScanPort::class.java),
             exposed,
-            "the provider-local handle must expose only the gateway and the reconciler",
+            "the provider-local handle must expose only the gateway, the reconciler and the read-only scan port",
         )
     }
 
