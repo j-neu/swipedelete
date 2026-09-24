@@ -1113,6 +1113,8 @@ git commit -m "test(app): M0 acceptance — quarantine, kill, restore (AC-1, AC-
 
 **Exit criteria:** a 500-item deck triages end-to-end at ≥ 60 fps with full undo; AC-8 and AC-15 pass.
 
+**Expanded to execution depth in [`docs/M1-PLAN.md`](M1-PLAN.md)** (Tasks 28–41, M1-T01a…M1-T14). That file resolves the M0 carry-forward blockers: D1 scan-progress port, D2 Activity-bound capability requests, D3 no new test dependency, D6 recovery-readiness gate. The bullets below are the milestone summary and are superseded by the plan for execution.
+
 Task IDs and scope (each follows the same RED→GREEN→REFACTOR→COMMIT shape as M0):
 
 - **M1-T01 `MediaStoreStorageGateway`** — media catalogue via `ContentResolver` cursors with paging; projections from §4.6 (`_ID`, `RELATIVE_PATH`, `SIZE`, `DATE_ADDED`, `DATE_MODIFIED`, `MIME_TYPE`, `WIDTH`, `HEIGHT`, `DURATION`, `BUCKET_DISPLAY_NAME`, `IS_TRASHED`, `IS_PENDING`, `OWNER_PACKAGE_NAME`); incremental `watch()` via `ContentObserver`. Tests: Robolectric cursor fixtures + contract suite + AC-10 media-never-in-non-media assertion.
