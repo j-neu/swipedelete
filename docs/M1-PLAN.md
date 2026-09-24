@@ -61,6 +61,10 @@ Tasks are numbered **Task 28 … Task 41**, continuing after the `Task 27` bound
 
 Every destructive entry point (`quarantine`, `move`, `restore`, `deletePermanently`) is reached only after `RecoveryCoordinator.awaitReady()` returns (`RecoveryCoordinator.kt:70`). If reconciliation failed, readiness stays `false` and mutation is blocked (the safe direction). Task 40 (M1-T13) adds the architecture test that a deck cannot mutate before readiness.
 
+### D7 — Coil is unusable at compileSdk 36 (discovered during wave-1 integration)
+
+`io.coil-kt.coil3:coil-compose:3.6.3` (the catalog pin) resolves `androidx.compose.*:1.12.0`, which requires `compileSdk 37` **and** AGP 9.1.0. This project is pinned to `compileSdk 36` / AGP 8.13.2 (`gradle/libs.versions.toml`), so adding Coil fails the AAR-metadata check outright (28 issues, verified on 2026-09-24). The `coil` catalog entries stay unused until the toolchain moves to AGP 9 + compileSdk 37. **Card thumbnails decode with `ImageDecoder` at an explicit target size**, the same path `:feature:viewer` already uses. Any M1 task that reaches for Coil must not.
+
 ---
 
 ## File structure
@@ -252,6 +256,7 @@ class DeckInvariantPropertyTest {
 
 **Interfaces:**
 - Produces: `@Composable fun SwipeCard(item: MediaItem, onDecision: (Gesture) -> Unit, modifier: Modifier = Modifier)`.
+- Thumbnails decode with `android.graphics.ImageDecoder` at an explicit target size (D7) — **do not add Coil**.
 - Direction commits on threshold **and** velocity; progressive tint; the destructive direction carries colour + icon + **text** ("Delete"), never colour alone (§11.4).
 
 - [ ] **Step 1: Write the failing Compose test** — drag past threshold and release commits `DELETE`; a slow drag under threshold snaps back and commits nothing; a fling commits at a lower distance.
