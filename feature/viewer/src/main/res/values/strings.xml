@@ -31,4 +31,31 @@
     <string name="viewer_video_speed_option">%1$sx</string>
     <string name="viewer_video_audio_track_n">Track %1$d</string>
     <string name="viewer_video_preview">Pause position preview</string>
+
+    <!-- Documents/other and unsupported items (SPEC 5.4, Task 38). The error
+         always names the actual MIME, and every card offers "Open with"; an
+         undecodable item is never a blank frame. -->
+    <string name="viewer_action_open_with">Open with</string>
+    <string name="viewer_document_title">No preview available</string>
+    <string name="viewer_document_body">This is a %1$s file. Open it with another app to view it.</string>
+    <string name="viewer_unsupported_title">Can\'t decode this file</string>
+    <string name="viewer_unsupported_body">This viewer can\'t decode %1$s on this device. Open it with another app instead.</string>
+    <string name="viewer_unsupported_metadata_size">Size: %1$s</string>
+    <string name="viewer_unsupported_metadata_dimensions">Dimensions: %1$d × %2$d</string>
+    <string name="viewer_unsupported_metadata_duration">Duration: %1$s</string>
+
+    <!-- APK card (SPEC 5.4, Task 38): icon, package, version, permissions,
+         signature, target SDK and an installed-version comparison. -->
+    <string name="viewer_apk_reading">Reading package…</string>
+    <string name="viewer_apk_package">Package: %1$s</string>
+    <string name="viewer_apk_version">Version: %1$s (%2$d)</string>
+    <string name="viewer_apk_target_sdk">Target SDK: %1$d</string>
+    <string name="viewer_apk_signature">Signature: %1$s</string>
+    <string name="viewer_apk_signature_unknown">unverified</string>
+    <string name="viewer_apk_permissions">Permissions requested: %1$d</string>
+    <string name="viewer_apk_installed_not">Not installed</string>
+    <string name="viewer_apk_installed_same">Installed: %1$s (same version)</string>
+    <string name="viewer_apk_installed_older">Installed: %1$s (older)</string>
+    <string name="viewer_apk_installed_newer">Installed: %1$s (newer)</string>
+    <string name="viewer_apk_installed_unknown">Installed version unavailable</string>
 </resources>

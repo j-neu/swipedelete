@@ -75,20 +75,39 @@ object ViewerDismiss {
  * How the viewer renders an item, chosen from its MIME. Kept as a pure
  * function so the dispatch decision is testable without a Compose rule.
  */
-enum class ViewerContentKind { IMAGE, ANIMATED_IMAGE, AUDIO, VIDEO }
+enum class ViewerContentKind { IMAGE, ANIMATED_IMAGE, AUDIO, VIDEO, APK, DOCUMENT }
 
 fun viewerContentKind(mime: String): ViewerContentKind = when {
+    mime.equals(APK_MIME, ignoreCase = true) -> ViewerContentKind.APK
     mime.startsWith("video/") -> ViewerContentKind.VIDEO
     mime.startsWith("audio/") -> ViewerContentKind.AUDIO
     mime == "image/gif" || mime == "image/webp" -> ViewerContentKind.ANIMATED_IMAGE
-    else -> ViewerContentKind.IMAGE
+    mime.startsWith("image/") -> ViewerContentKind.IMAGE
+    else -> ViewerContentKind.DOCUMENT
+}
+
+/**
+ * A media MIME is authoritative, but a mislabelled installer (`.apk` with
+ * `application/octet-stream`) must still reach the APK card, not the document
+ * card — so the extension is the fallback signal.
+ */
+fun viewerContentKind(item: MediaItem): ViewerContentKind {
+    val byMime = viewerContentKind(item.mime)
+    if (byMime != ViewerContentKind.DOCUMENT) return byMime
+    return if (isApkFile(item)) ViewerContentKind.APK else byMime
+}
+
+fun isApkFile(item: MediaItem): Boolean {
+    val name = item.path ?: item.uri
+    return name.substringBefore('?').endsWith(".apk", ignoreCase = true)
 }
 
 /**
  * SPEC 5.4: the viewer. Horizontal paging between deck items, swipe-down
  * dismissal, and a **button** for the slot dock (decision 5). Content is
- * dispatched by MIME: still images, animated images, audio and video are in
- * M1's scope; APK/document/unsupported handling is Task 38.
+ * dispatched by MIME: still images, animated images, audio and video play
+ * in-place; APK, document/other and undecodable items go to their honest cards
+ * (Task 38) rather than a blank frame.
  */
 @Composable
 fun ViewerScreen(
@@ -101,6 +120,8 @@ fun ViewerScreen(
     imageLoader: ImageLoader = AndroidImageLoader,
     gifLoader: GifLoader = AndroidGifLoader,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    apkInspector: ApkInspector = rememberAndroidApkInspector(ioDispatcher),
+    onOpenWith: (MediaItem) -> Unit = rememberOpenWithHandler(),
     videoContent: @Composable (MediaItem) -> Unit = { VideoViewer(item = it) },
 ) {
     if (pager.items.isEmpty()) return
@@ -137,6 +158,8 @@ fun ViewerScreen(
                 imageLoader = imageLoader,
                 gifLoader = gifLoader,
                 ioDispatcher = ioDispatcher,
+                apkInspector = apkInspector,
+                onOpenWith = onOpenWith,
                 videoContent = videoContent,
             )
         }
@@ -163,12 +186,32 @@ private fun ViewerContent(
     imageLoader: ImageLoader,
     gifLoader: GifLoader,
     ioDispatcher: CoroutineDispatcher,
+    apkInspector: ApkInspector,
+    onOpenWith: (MediaItem) -> Unit,
     videoContent: @Composable (MediaItem) -> Unit,
 ) {
-    when (viewerContentKind(item.mime)) {
+    val fallback: @Composable () -> Unit = {
+        UnsupportedCard(item = item, reason = UnsupportedReason.UNDECODABLE, onOpenWith = onOpenWith)
+    }
+
+    when (viewerContentKind(item)) {
         ViewerContentKind.VIDEO -> videoContent(item)
 
         ViewerContentKind.AUDIO -> AudioViewer(item)
+
+        ViewerContentKind.APK -> ApkCard(
+            item = item,
+            openStream = openStream,
+            onOpenWith = onOpenWith,
+            inspector = apkInspector,
+            ioDispatcher = ioDispatcher,
+        )
+
+        ViewerContentKind.DOCUMENT -> UnsupportedCard(
+            item = item,
+            reason = UnsupportedReason.DOCUMENT,
+            onOpenWith = onOpenWith,
+        )
 
         ViewerContentKind.ANIMATED_IMAGE -> GifViewer(
             item = item,
@@ -180,6 +223,7 @@ private fun ViewerContent(
                     item = item,
                     openStream = openStream,
                     loader = imageLoader,
+                    onUndecodable = fallback,
                     ioDispatcher = ioDispatcher,
                 )
             },
@@ -189,6 +233,7 @@ private fun ViewerContent(
             item = item,
             openStream = openStream,
             loader = imageLoader,
+            onUndecodable = fallback,
             ioDispatcher = ioDispatcher,
         )
     }

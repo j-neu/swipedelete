@@ -158,6 +158,9 @@ class ZoomState(
 /**
  * SPEC 5.4: full-resolution image decode (bounded by the laid-out target),
  * pinch and double-tap zoom, pan, EXIF orientation respected.
+ *
+ * [onUndecodable] renders when the bytes cannot be decoded: the viewer must be
+ * an honest error (Task 38), never a blank frame.
  */
 @Composable
 fun ImageViewer(
@@ -166,19 +169,26 @@ fun ImageViewer(
     modifier: Modifier = Modifier,
     loader: ImageLoader = AndroidImageLoader,
     zoom: ZoomState = remember { ZoomState() },
+    onUndecodable: @Composable () -> Unit = {},
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
 ) {
     BoxWithConstraints(modifier = modifier.fillMaxSize()) {
         val target = IntSize(maxWidth.value.toInt(), maxHeight.value.toInt())
         var display by remember(item.id) { mutableStateOf<DisplayImage?>(null) }
+        var loadAttempted by remember(item.id) { mutableStateOf(false) }
 
         LaunchedEffect(item.id, target) {
             if (target.width > 0 && target.height > 0) {
                 display = withContext(ioDispatcher) { loader.load({ openStream(item) }, target) }
+                loadAttempted = true
             }
         }
 
-        val image = display ?: return@BoxWithConstraints
+        val image = display
+        if (image == null) {
+            if (loadAttempted) onUndecodable()
+            return@BoxWithConstraints
+        }
         val contentDescription = stringResource(R.string.viewer_cd_image)
         val currentScale = zoom.scale
         val currentOffset = zoom.offset
