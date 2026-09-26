@@ -24,7 +24,11 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): SwipeDeleteDatabase =
-        Room.databaseBuilder(context, SwipeDeleteDatabase::class.java, "swipedelete.db").build()
+        Room.databaseBuilder(context, SwipeDeleteDatabase::class.java, "swipedelete.db")
+            // M1-T12: the session table gained `stateData`; migrate a v1 database
+            // instead of destroying it (the journal inside it is AC-1 evidence).
+            .addMigrations(SwipeDeleteDatabase.MIGRATION_1_2)
+            .build()
 
     @Provides
     @Singleton

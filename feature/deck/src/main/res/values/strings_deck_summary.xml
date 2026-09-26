@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Session summary strings (SPEC 5.5 / M1-T13, AC-9). Kept out of the shared
+    strings.xml so a concurrent feature/deck change cannot conflict with this
+    file.
+
+    The byte phrases are deliberately NOT here: "… reclaimable" and "… freed"
+    are produced only by core:common's formatReclaimable/formatFreed, so this
+    surface cannot invent its own wording (AC-9).
+-->
+<resources>
+    <string name="session_summary_title">Session summary</string>
+    <string name="session_summary_reviewed">Reviewed %1$d</string>
+    <string name="session_summary_kept">Kept %1$d</string>
+    <string name="session_summary_moved_to_slot">Moved %1$d to slot %2$d</string>
+    <string name="session_summary_staged">Staged for deletion %1$d</string>
+    <string name="session_summary_deferred">Deferred %1$d</string>
+    <string name="session_summary_restore_everything">Restore everything from this session</string>
+    <string name="session_summary_exit_prompt">%1$d items are staged for deletion. What should happen to them?</string>
+    <string name="session_summary_apply">Apply</string>
+    <string name="session_summary_keep_staged">Keep staged</string>
+    <string name="session_summary_discard">Discard</string>
+</resources>

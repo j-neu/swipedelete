@@ -100,6 +100,10 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(testFixtures(project(":core:storage")))
+    // NoMutationBeforeRecoveryTest (D6) drives the real RecoveryCoordinator
+    // through the real SessionController, so the app unit-test classpath needs
+    // the deck feature. Task 41 wires it into the app's main graph.
+    testImplementation(project(":feature:deck"))
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.androidx.navigation.testing)
