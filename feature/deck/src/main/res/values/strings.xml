@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Session history strip (SPEC 5.5). Each entry names the action and the
+         item it applied to, so a chip can be individually reverted. -->
+    <string name="history_entry_staged">staged %1$s</string>
+    <string name="history_entry_kept">kept %1$s</string>
+    <string name="history_entry_moved">moved %1$s to slot %2$d</string>
+    <string name="history_entry_deferred">deferred %1$s</string>
+    <string name="history_entry_undo">undo</string>
+</resources>
