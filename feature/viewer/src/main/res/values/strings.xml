@@ -18,4 +18,17 @@
 
     <!-- Audio transport (SPEC 5.4: transport controls, duration, metadata). -->
     <string name="viewer_audio_position_of_duration">%1$s / %2$s</string>
+
+    <!-- Video transport (SPEC 5.4: play/pause, scrub with thumbnail preview,
+         ±10 s, speed 0.25x-3x, frame step, loop toggle, audio-track selection;
+         audio always available). -->
+    <string name="viewer_video_skip_backward">-10 s</string>
+    <string name="viewer_video_skip_forward">+10 s</string>
+    <string name="viewer_video_frame_backward">Frame -</string>
+    <string name="viewer_video_frame_forward">Frame +</string>
+    <string name="viewer_video_loop">Loop</string>
+    <string name="viewer_video_loop_on">Loop on</string>
+    <string name="viewer_video_speed_option">%1$sx</string>
+    <string name="viewer_video_audio_track_n">Track %1$d</string>
+    <string name="viewer_video_preview">Pause position preview</string>
 </resources>

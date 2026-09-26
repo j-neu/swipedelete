@@ -160,8 +160,10 @@ fun formatDuration(durationMs: Long): String {
 
 // core-ktx (String.toUri) is not in the resolved catalog, so Uri.parse stays.
 @Suppress("UseKtx")
-private fun toMedia3Item(item: MediaItem): androidx.media3.common.MediaItem {
+internal fun mediaUri(item: MediaItem): Uri {
     val value = item.uri
-    val uri = if (value.contains("://")) Uri.parse(value) else Uri.fromFile(File(item.path ?: value))
-    return androidx.media3.common.MediaItem.fromUri(uri)
+    return if (value.contains("://")) Uri.parse(value) else Uri.fromFile(File(item.path ?: value))
 }
+
+internal fun toMedia3Item(item: MediaItem): androidx.media3.common.MediaItem =
+    androidx.media3.common.MediaItem.fromUri(mediaUri(item))
