@@ -237,8 +237,13 @@ private fun SwipeDirectionOverlay(
     }
 }
 
+/**
+ * A bounded thumbnail for [item], falling back to the surface token when the
+ * item cannot be decoded. Shared with the staging preview grid so the deck has
+ * a single thumbnail path (D7: no Coil).
+ */
 @Composable
-private fun Thumbnail(item: MediaItem, modifier: Modifier = Modifier) {
+internal fun Thumbnail(item: MediaItem, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, item.uri) {
         value = runCatching { decodeThumbnail(context.contentResolver, item.uri) }.getOrNull()

@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Staging strip and Apply confirmation (SPEC 5.2 / 6.6, decision 3).
+         The strip itself reuses the designsystem "N to delete · Undo" surface;
+         Apply raises exactly one confirmation that names the count and the
+         bytes and previews the staged set. Nothing is permanently deleted. -->
+    <string name="staging_apply_confirm_title">Move these to quarantine?</string>
+    <string name="staging_apply_confirm_message">%1$d items · %2$s. Nothing is permanently deleted.</string>
+    <string name="staging_apply_confirm_action">Move to quarantine</string>
+    <string name="staging_apply_cancel">Cancel</string>
+    <string name="staging_apply_more">and %1$d more</string>
+</resources>
