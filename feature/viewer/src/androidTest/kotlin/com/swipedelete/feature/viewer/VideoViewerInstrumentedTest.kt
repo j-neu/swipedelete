@@ -12,6 +12,7 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -30,6 +31,12 @@ import org.junit.runner.RunWith
  * arithmetic without a device; this asserts the real player's state actually
  * moves the way those controls ask it to.
  *
+ * Media3 requires every player access to happen on the thread that built it
+ * (the main thread), while the instrumentation thread is where blocking awaits
+ * belong. Player calls are therefore marshalled through [onMain]; the latch
+ * waits happen on the instrumentation thread so they never block the player's
+ * own main-thread delivery.
+ *
  * A two-second H.264 MP4 is encoded on the device with `MediaCodec`: no media
  * fixture is checked in, and the test skips (rather than fails) on a device
  * without an AVC encoder.
@@ -43,6 +50,9 @@ class VideoViewerInstrumentedTest {
     private lateinit var ops: ExoVideoPlayerOps
     private lateinit var controls: VideoControls
 
+    private fun onMain(block: () -> Unit) =
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(block)
+
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
@@ -51,73 +61,98 @@ class VideoViewerInstrumentedTest {
         file = File(context.cacheDir, "viewer-video-test.mp4")
         writeTestVideo(file, seconds = 2, fps = 30)
 
-        player = ExoPlayer.Builder(context).build()
-        ops = ExoVideoPlayerOps(player)
-        controls = VideoControls(ops)
-
-        player.setMediaItem(Media3Item.fromUri(Uri.fromFile(file)))
-        player.prepare()
+        onMain {
+            player = ExoPlayer.Builder(context).build()
+            ops = ExoVideoPlayerOps(player)
+            controls = VideoControls(ops)
+            player.setMediaItem(Media3Item.fromUri(Uri.fromFile(file)))
+            player.prepare()
+        }
         awaitPlaybackState(Player.STATE_READY)
     }
 
     @After
     fun tearDown() {
-        if (::player.isInitialized) player.release()
+        if (::player.isInitialized) onMain { player.release() }
         if (::file.isInitialized) file.delete()
     }
 
     @Test
     fun a_prepared_video_reports_a_positive_duration() {
-        assertTrue("duration was ${player.duration}", player.duration > 0L)
-        assertTrue("ops must expose the media duration", ops.durationMs > 0L)
+        var duration = 0L
+        var opsDuration = 0L
+        onMain {
+            duration = player.duration
+            opsDuration = ops.durationMs
+        }
+        assertTrue("duration was $duration", duration > 0L)
+        assertTrue("ops must expose the media duration", opsDuration > 0L)
     }
 
     @Test
     fun play_then_pause_transitions_the_real_player() {
-        controls.togglePlay()
+        onMain { controls.togglePlay() }
         awaitIsPlaying(true)
-        assertTrue(player.isPlaying)
+        assertTrue("player never reported isPlaying=true", isPlaying())
 
-        controls.togglePlay()
+        onMain { controls.togglePlay() }
         awaitIsPlaying(false)
-        assertFalse(player.isPlaying)
+        assertFalse("player never reported isPlaying=false", isPlaying())
     }
 
     @Test
     fun speed_and_loop_reach_the_real_player() {
-        controls.setSpeed(2f)
-        assertEquals(2f, player.playbackParameters.speed, 0.001f)
-
-        controls.toggleLoop()
-        assertEquals(Player.REPEAT_MODE_ONE, player.repeatMode)
-
-        controls.toggleLoop()
-        assertEquals(Player.REPEAT_MODE_OFF, player.repeatMode)
+        var speed = 0f
+        var loopOn = 0
+        var loopOff = 0
+        onMain {
+            controls.setSpeed(2f)
+            speed = player.playbackParameters.speed
+            controls.toggleLoop()
+            loopOn = player.repeatMode
+            controls.toggleLoop()
+            loopOff = player.repeatMode
+        }
+        assertEquals(2f, speed, 0.001f)
+        assertEquals(Player.REPEAT_MODE_ONE, loopOn)
+        assertEquals(Player.REPEAT_MODE_OFF, loopOff)
     }
 
     @Test
     fun frame_step_pauses_the_real_player_and_moves_one_frame() {
-        controls.togglePlay()
+        onMain { controls.togglePlay() }
         awaitIsPlaying(true)
 
-        val before = player.currentPosition
-        controls.stepFrame(FrameStep.FORWARD)
+        var before = 0L
+        onMain { before = player.currentPosition }
+        onMain { controls.stepFrame(FrameStep.FORWARD) }
 
-        assertFalse("a frame step must leave the player paused", player.isPlaying)
-        assertTrue(
-            "expected to advance from $before, was ${player.currentPosition}",
-            player.currentPosition > before,
-        )
+        var playing = true
+        var after = 0L
+        onMain {
+            playing = player.isPlaying
+            after = player.currentPosition
+        }
+        assertFalse("a frame step must leave the player paused", playing)
+        assertTrue("expected to advance from $before, was $after", after > before)
     }
 
     @Test
     fun a_seek_is_clamped_to_the_media_duration() {
-        controls.seekTo(player.duration + 60_000L)
+        var position = 0L
+        var duration = 0L
+        onMain {
+            duration = player.duration
+            controls.seekTo(duration + 60_000L)
+            position = player.currentPosition
+        }
+        assertTrue("a seek past the end must clamp, was $position", position <= duration)
+    }
 
-        assertTrue(
-            "a seek past the end must clamp, was ${player.currentPosition}",
-            player.currentPosition <= player.duration,
-        )
+    private fun isPlaying(): Boolean {
+        var playing = false
+        onMain { playing = player.isPlaying }
+        return playing
     }
 
     private fun awaitPlaybackState(expected: Int, timeoutMs: Long = 10_000L) {
@@ -127,15 +162,17 @@ class VideoViewerInstrumentedTest {
                 if (playbackState == expected) latch.countDown()
             }
         }
-        player.addListener(listener)
-        if (player.playbackState == expected) latch.countDown()
+        onMain {
+            player.addListener(listener)
+            if (player.playbackState == expected) latch.countDown()
+        }
         try {
             assertTrue(
-                "player never reached playback state $expected (was ${player.playbackState})",
+                "player never reached playback state $expected (was ${playbackState()})",
                 latch.await(timeoutMs, TimeUnit.MILLISECONDS),
             )
         } finally {
-            player.removeListener(listener)
+            onMain { player.removeListener(listener) }
         }
     }
 
@@ -146,16 +183,24 @@ class VideoViewerInstrumentedTest {
                 if (isPlaying == expected) latch.countDown()
             }
         }
-        player.addListener(listener)
-        if (player.isPlaying == expected) latch.countDown()
+        onMain {
+            player.addListener(listener)
+            if (player.isPlaying == expected) latch.countDown()
+        }
         try {
             assertTrue(
                 "player.isPlaying never became $expected",
                 latch.await(timeoutMs, TimeUnit.MILLISECONDS),
             )
         } finally {
-            player.removeListener(listener)
+            onMain { player.removeListener(listener) }
         }
+    }
+
+    private fun playbackState(): Int {
+        var state = Player.STATE_IDLE
+        onMain { state = player.playbackState }
+        return state
     }
 
     private companion object {

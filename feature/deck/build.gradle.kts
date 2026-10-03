@@ -10,6 +10,7 @@ android {
 
     defaultConfig {
         minSdk = 26
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildFeatures {
@@ -71,4 +72,12 @@ dependencies {
     testImplementation(libs.androidx.compose.ui.test.junit4)
     // MediaItem fixtures for the deck tests come from the gateway fake.
     testImplementation(testFixtures(project(":core:storage")))
+
+    // Device-only pass for the real MediaCodec decoder budget (Task 39). The
+    // androidTest source set needs its own JUnit/runner dependencies; they are
+    // not shared with testImplementation.
+    androidTestImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.test.core)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.ext.junit)
 }
