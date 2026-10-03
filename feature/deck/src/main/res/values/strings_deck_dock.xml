@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Five-slot dock strings (SPEC 5.2 / 5.3, M1-T06). Kept in their own file so a
+    concurrent feature/deck change cannot conflict with the shared strings.xml.
+-->
+<resources>
+    <!-- The dock surface is a drag target; this also names the non-drag path
+         (talkback reaches every slot through the shared Move buttons). -->
+    <string name="dock_drag_handle">Drag a card onto a slot to move it</string>
+</resources>

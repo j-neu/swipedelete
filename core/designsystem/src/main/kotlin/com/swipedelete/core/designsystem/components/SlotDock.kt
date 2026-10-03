@@ -1,5 +1,6 @@
 package com.swipedelete.core.designsystem.components
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +32,13 @@ import com.swipedelete.core.designsystem.SwipeDeleteTheme
 data class SlotSpec(
     val name: String,
     val enabled: Boolean = true,
+    /**
+     * The reason a disabled slot cannot receive a file (SPEC 5.2: "a slot greys
+     * out if its destination is unavailable … with the reason on tap"). It is
+     * localised by the caller, so the shared component carries no string of its
+     * own for it.
+     */
+    val unavailableReason: String? = null,
 )
 
 /**
@@ -40,12 +48,17 @@ data class SlotSpec(
  * tapping Move instead of dragging, so the drag gesture is never the only path.
  * The component is presentation-only — it reports the chosen slot and performs
  * no move itself.
+ *
+ * A disabled slot is greyed by the button's disabled state and, when
+ * [onSlotUnavailable] is supplied, stays tappable as a whole so the caller can
+ * surface [SlotSpec.unavailableReason] instead of leaving a dead end (AC-19).
  */
 @Composable
 fun SlotDock(
     slots: List<SlotSpec>,
     onSlotMove: (SlotSpec) -> Unit,
     modifier: Modifier = Modifier,
+    onSlotUnavailable: ((SlotSpec) -> Unit)? = null,
 ) {
     val moveLabel = stringResource(R.string.action_move)
     val colors = SwipeDeleteTheme.colors
@@ -62,11 +75,21 @@ fun SlotDock(
         ) {
             slots.forEach { slot ->
                 val moveToLabel = stringResource(R.string.slot_move_to, slot.name)
+                val unavailable = !slot.enabled && onSlotUnavailable != null
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
                         text = slot.name,
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurfaceVariant,
+                        modifier = if (unavailable) {
+                            Modifier
+                                .clickable { onSlotUnavailable.invoke(slot) }
+                                .semantics {
+                                    contentDescription = slot.unavailableReason ?: moveToLabel
+                                }
+                        } else {
+                            Modifier
+                        },
                     )
                     TextButton(
                         onClick = { onSlotMove(slot) },
