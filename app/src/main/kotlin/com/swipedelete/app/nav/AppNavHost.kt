@@ -14,8 +14,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.swipedelete.app.R
+import com.swipedelete.core.model.ItemId
+import com.swipedelete.feature.deck.ui.DeckScreen
 import com.swipedelete.feature.settings.grants.GrantsRoute
 import com.swipedelete.feature.settings.onboarding.OnboardingRoute
+import com.swipedelete.feature.viewer.ViewerPager
+import com.swipedelete.feature.viewer.ViewerScreen
 
 /**
  * The M0 app shell. Every route in [Destinations] is declared here, in the order
@@ -29,6 +33,10 @@ import com.swipedelete.feature.settings.onboarding.OnboardingRoute
  * destinations. The factory of each `NavBackStackEntry` is a plain
  * `SavedStateViewModelFactory`, so a `@HiltViewModel` is resolved through
  * `hiltViewModel()` inside the route, not from the graph.
+ *
+ * [deckScreen] and [viewerScreen] are the M1 entry points: the deck route hosts
+ * the deck surface (card + accessible action bar), and the viewer route reads its
+ * `{itemId}` argument and opens the viewer on that item (decision 5).
  */
 @Composable
 fun AppNavHost(
@@ -38,19 +46,31 @@ fun AppNavHost(
         OnboardingRoute(onFinished = onFinished)
     },
     settingsScreen: @Composable () -> Unit = { GrantsRoute() },
+    deckScreen: @Composable () -> Unit = {
+        DeckScreen(item = null, onDecision = {}, onMove = {})
+    },
+    viewerScreen: @Composable (itemId: String) -> Unit = { itemId ->
+        ViewerScreen(
+            itemId = ItemId(itemId),
+            pager = ViewerPager(items = emptyList()),
+            openStream = { error("the viewer pager source lands with the deck view model") },
+            onDismiss = {},
+            onOpenDock = {},
+        )
+    },
 ) {
     NavHost(navController = navController, startDestination = startDestination) {
         composable(Destinations.ONBOARDING) {
             onboardingScreen { navController.navigate(Destinations.DECK) }
         }
         composable(Destinations.DECK) {
-            PlaceholderScreen(title = stringResource(R.string.nav_deck))
+            deckScreen()
         }
         composable(
             route = Destinations.VIEWER,
             arguments = listOf(navArgument(Destinations.ITEM_ID_ARG) { type = NavType.StringType }),
-        ) {
-            PlaceholderScreen(title = stringResource(R.string.nav_viewer))
+        ) { entry ->
+            viewerScreen(entry.arguments?.getString(Destinations.ITEM_ID_ARG).orEmpty())
         }
         composable(Destinations.DASHBOARD) {
             PlaceholderScreen(title = stringResource(R.string.nav_dashboard))

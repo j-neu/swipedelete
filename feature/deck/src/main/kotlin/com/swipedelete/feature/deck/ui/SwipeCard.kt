@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -112,6 +113,7 @@ fun SwipeCard(
     item: MediaItem,
     onDecision: (Gesture) -> Unit,
     modifier: Modifier = Modifier,
+    haptics: DeckHaptics = rememberDeckHaptics(),
 ) {
     val colors = SwipeDeleteTheme.colors
     val density = LocalDensity.current
@@ -133,6 +135,18 @@ fun SwipeCard(
         flingDistancePx = flingDistancePx,
         minFlingVelocityPxPerSec = minFlingVelocityPxPerSec,
     )
+
+    // One light tick the first time a drag crosses the commit threshold; reset
+    // when the card returns to its resting position (SPEC 5.2 haptics).
+    var thresholdFired by remember(item.id) { mutableStateOf(false) }
+    LaunchedEffect(liveDirection) {
+        if (liveDirection != null && !thresholdFired) {
+            haptics.threshold()
+            thresholdFired = true
+        } else if (liveDirection == null) {
+            thresholdFired = false
+        }
+    }
 
     val containerColor = when (liveDirection) {
         SwipeDirection.LEFT -> colors.destructiveContainer
@@ -169,6 +183,7 @@ fun SwipeCard(
                             minFlingVelocityPxPerSec = minFlingVelocityPxPerSec,
                         )
                         dragOffset = Offset.Zero
+                        if (direction != null) haptics.drop()
                         when (direction) {
                             SwipeDirection.LEFT -> onDecision(Gesture.DELETE)
                             SwipeDirection.RIGHT -> onDecision(Gesture.KEEP)

@@ -72,6 +72,10 @@ dependencies {
     // M0-T16: the onboarding and grants/slots screens, and the one grant store
     // (read + write ports) :app's Hilt graph binds.
     implementation(project(":feature:settings"))
+    // M1-T14: the deck destination hosts the deck surface (card + accessible
+    // action bar) and the viewer/{itemId} destination opens the real viewer.
+    implementation(project(":feature:deck"))
+    implementation(project(":feature:viewer"))
 
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

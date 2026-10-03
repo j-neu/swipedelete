@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Deck accessibility strings (SPEC 11.4 / AC-19, M1-T14). Kept in their own
+    file so a concurrent feature/deck change to the shared strings.xml cannot
+    conflict with this surface.
+
+    The action bar is the non-gesture equivalent of every swipe, so its labels
+    mirror the swipe vocabulary: Delete/Keep/Move/Skip. Each label doubles as
+    the custom accessibility action name and (via the *_cd strings) the control's
+    content description for TalkBack traversal.
+-->
+<resources>
+    <string name="deck_action_bar_cd">Deck actions</string>
+
+    <string name="deck_action_delete">Delete</string>
+    <string name="deck_action_keep">Keep</string>
+    <string name="deck_action_move">Move</string>
+    <string name="deck_action_skip">Skip</string>
+
+    <string name="deck_action_delete_cd">Delete this item</string>
+    <string name="deck_action_keep_cd">Keep this item</string>
+    <string name="deck_action_move_cd">Move this item to a slot</string>
+    <string name="deck_action_skip_cd">Skip this item</string>
+</resources>
