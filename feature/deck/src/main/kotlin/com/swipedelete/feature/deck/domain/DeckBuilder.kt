@@ -33,27 +33,36 @@ class DeckBuilder(
 
     suspend fun build(query: DeckQuery): DeckSnapshot {
         val builtAt = clock.nowMillis()
-        val items = when (query) {
-            is DeckQuery.Folder -> folderItems(query.source)
-            is DeckQuery.Smart -> smartItems(query.rule)
+        val scan = when (query) {
+            is DeckQuery.Folder -> folderScan(query.source)
+            is DeckQuery.Smart -> smartScan(query.rule)
             // M3 bridge: a module deck's candidates come from the cleaner module,
             // which does not exist yet. The deck is honest and empty until then.
-            is DeckQuery.Module -> emptyList()
+            is DeckQuery.Module -> ScanSummary(emptyList(), truncated = false, scanned = 0)
             is DeckQuery.Resume -> error(
                 "Resume decks are materialised by the session layer (Task 40), not by DeckBuilder: " +
                     "the persisted query for session ${query.session.value} is not one of its injected ports.",
             )
         }
-        return DeckSnapshot(items = items, query = query, builtAt = builtAt)
+        return DeckSnapshot(
+            items = scan.items,
+            query = query,
+            builtAt = builtAt,
+            truncated = scan.truncated,
+            scanned = scan.scanned,
+        )
     }
 
-    private suspend fun folderItems(source: SourceId): List<MediaItem> {
-        val ref = gateway.sources().firstOrNull { it.id == source } ?: return emptyList()
-        return scanAll(ref).oldestFirst()
+    private suspend fun folderScan(source: SourceId): ScanSummary {
+        val ref = gateway.sources().firstOrNull { it.id == source }
+            ?: return ScanSummary(emptyList(), truncated = false, scanned = 0)
+        val scan = scanAll(ref)
+        return scan.copy(items = scan.items.oldestFirst())
     }
 
-    private suspend fun smartItems(rule: SmartRule): List<MediaItem> {
-        val candidates = gateway.sources().flatMap { scanAll(it) }
+    private suspend fun smartScan(rule: SmartRule): ScanSummary {
+        val scans = gateway.sources().map { scanAll(it) }
+        val candidates = scans.flatMap { it.items }
         val matched = when (rule) {
             SmartRule.SCREENSHOTS -> candidates.filter { it.isScreenshot() }
             SmartRule.VIDEOS_OVER -> candidates.filter { it.isVideo() && it.sizeBytes > rule.sizeMb * BYTES_PER_MB }
@@ -63,14 +72,31 @@ class DeckBuilder(
             SmartRule.UNREVIEWED -> candidates
             SmartRule.LARGEST_FIRST -> candidates
         }
-        return if (rule.ordersLargestFirst) matched.largestFirst() else matched.oldestFirst()
+        return ScanSummary(
+            items = if (rule.ordersLargestFirst) matched.largestFirst() else matched.oldestFirst(),
+            // A deck built from several sources is partial if *any* of them was
+            // capped; the caller must present it as a partial deck, not a complete
+            // one (§9.4 honesty).
+            truncated = scans.any { it.truncated },
+            scanned = scans.sumOf { it.scanned },
+        )
     }
 
-    private suspend fun scanAll(source: SourceRef): List<MediaItem> {
+    private suspend fun scanAll(source: SourceRef): ScanSummary {
         val items = ArrayList<MediaItem>()
-        scanner(source).scan(source).collect { page -> items += page.items }
-        return items
+        var truncated = false
+        var scanned = 0
+        scanner(source).scan(source).collect { page ->
+            items += page.items
+            truncated = truncated || page.truncated
+            // `ScanPage.scanned` is cumulative, so the furthest count wins.
+            scanned = maxOf(scanned, page.scanned)
+        }
+        return ScanSummary(items = items, truncated = truncated, scanned = scanned)
     }
+
+    /** The scanned items plus the honest progress/truncation the frozen Page cannot carry. */
+    private data class ScanSummary(val items: List<MediaItem>, val truncated: Boolean, val scanned: Int)
 }
 
 /**
@@ -81,6 +107,14 @@ data class DeckSnapshot(
     val items: List<MediaItem>,
     val query: DeckQuery,
     val builtAt: Long,
+    /**
+     * True when the scan hit its cap before finishing (Task 30 / §9.4): the deck
+     * is missing candidates and the UI must present it as partial rather than
+     * imply the library was fully seen.
+     */
+    val truncated: Boolean = false,
+    /** How many candidates the scan examined, cumulative across every source. */
+    val scanned: Int = 0,
 )
 
 /**

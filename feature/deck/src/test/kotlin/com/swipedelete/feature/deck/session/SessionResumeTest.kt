@@ -171,9 +171,10 @@ class SessionResumeTest {
         controller.decide(Gesture.DELETE)
         controller.decide(Gesture.DELETE)
 
-        val moved = controller.applyStaged()
+        val result = controller.applyStaged()
 
-        assertEquals(2, moved)
+        assertEquals(2, result.quarantined)
+        assertTrue(result.aborted.isEmpty())
         assertEquals(listOf(ItemId("i1"), ItemId("i2")), mutations.quarantined.single().map { it.id })
         assertTrue(controller.currentState().staged.isEmpty(), "applied items leave the staging strip")
         assertEquals(
