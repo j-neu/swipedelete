@@ -21,7 +21,9 @@ import com.swipedelete.core.storage.QuarantineStorageGateway
 import com.swipedelete.core.storage.Reconciler
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
+import com.swipedelete.core.storage.mediastore.MediaStoreStorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import com.swipedelete.core.storage.routing.SourceRoutingStorageGateway
 import com.swipedelete.core.storage.saf.SafStorageGateway
 import com.swipedelete.core.storage.scan.SourceScanPort
 import dagger.Binds
@@ -137,13 +139,19 @@ class StorageGraphOrderTest {
         val protectedRoots = handle.gateway as ProtectedRootsStorageGateway
         val journaling = field(protectedRoots, "delegate") as JournalingStorageGateway
         val quarantineLayer = field(journaling, "delegate") as QuarantineStorageGateway
-        val concrete = field(quarantineLayer, "delegate") as SafStorageGateway
+        val concrete = field(quarantineLayer, "delegate") as SourceRoutingStorageGateway
 
-        // The concrete gateway must not own a second quarantine root: its store is
-        // null, which is also observable as an explicit not-configured refusal.
+        // The concrete router owns no quarantine root of its own, and neither does
+        // either child gateway: the Quarantine layer owns the one store.
+        val safConcrete = field(concrete, "saf") as SafStorageGateway
+        val mediaConcrete = field(concrete, "mediaStore") as MediaStoreStorageGateway
         assertNull(
-            field(concrete, "quarantineStore"),
+            field(safConcrete, "quarantineStore"),
             "SafStorageGateway must be constructed with quarantineStore = null; the Quarantine layer owns the store",
+        )
+        assertNull(
+            field(mediaConcrete, "quarantineStore"),
+            "MediaStoreStorageGateway must be constructed with quarantineStore = null; the Quarantine layer owns the store",
         )
 
         // The handle's read-only scan port is the concrete gateway itself: it

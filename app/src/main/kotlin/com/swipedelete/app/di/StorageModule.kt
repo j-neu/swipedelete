@@ -11,7 +11,9 @@ import com.swipedelete.core.storage.ProtectedRootsStorageGateway
 import com.swipedelete.core.storage.QuarantineStorageGateway
 import com.swipedelete.core.storage.Reconciler
 import com.swipedelete.core.storage.StorageGateway
+import com.swipedelete.core.storage.mediastore.MediaStoreStorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
+import com.swipedelete.core.storage.routing.SourceRoutingStorageGateway
 import com.swipedelete.core.storage.saf.PersistedGrantStore
 import com.swipedelete.core.storage.saf.SafStorageGateway
 import com.swipedelete.core.storage.scan.SourceScanPort
@@ -254,12 +256,18 @@ object StorageModule {
         quarantineRoot: File,
     ): StorageGraphHandle {
         // Constructed here, not bound: the only injectable storage type is the
-        // decorated gateway the handle exposes (finding 1).
-        val concrete = SafStorageGateway(
+        // decorated gateway the handle exposes (finding 1). Two concrete backends
+        // are combined behind one routing gateway, so Tier-1 media sources and
+        // granted SAF folders are both reachable through the same frozen surface
+        // (finding M1-T15-1). Neither is a Hilt binding, so the AC-1/AC-7 bypass
+        // stays closed.
+        val saf = SafStorageGateway(
             context = context,
             persisted = persisted,
             quarantineStore = null,
         )
+        val mediaStore = MediaStoreStorageGateway(context = context)
+        val concrete = SourceRoutingStorageGateway(saf = saf, mediaStore = mediaStore)
         val graph = assembleStorageGraph(
             concrete = concrete,
             journal = journal,

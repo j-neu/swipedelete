@@ -3,6 +3,7 @@ package com.swipedelete.app.di
 import android.content.Context
 import androidx.room.Room
 import com.swipedelete.core.database.SwipeDeleteDatabase
+import com.swipedelete.core.database.dao.DeckSessionDao
 import com.swipedelete.core.database.dao.JournalDao
 import com.swipedelete.core.database.dao.SlotDao
 import dagger.Module
@@ -38,4 +39,9 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideSlotDao(database: SwipeDeleteDatabase): SlotDao = database.slotDao()
+
+    /** The durable deck sessions (SPEC 5.5); :feature:deck's SessionController owns them. */
+    @Provides
+    @Singleton
+    fun provideDeckSessionDao(database: SwipeDeleteDatabase): DeckSessionDao = database.deckSessionDao()
 }

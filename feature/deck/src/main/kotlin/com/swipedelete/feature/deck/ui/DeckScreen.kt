@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import com.swipedelete.core.designsystem.components.EmptyState
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.feature.deck.domain.Gesture
@@ -34,6 +35,7 @@ fun DeckScreen(
     haptics: DeckHaptics = rememberDeckHaptics(),
     topContent: @Composable () -> Unit = {},
     bottomContent: @Composable () -> Unit = {},
+    onOpen: () -> Unit = {},
 ) {
     val guardedDecision: (Gesture) -> Unit = { gesture ->
         runCatching { onDecision(gesture) }.onFailure { haptics.failure() }
@@ -49,9 +51,10 @@ fun DeckScreen(
                 SwipeCard(
                     item = item,
                     onDecision = guardedDecision,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().testTag(SwipeCardTestTag),
                     haptics = haptics,
                     onRevealDock = guardedMove,
+                    onOpen = onOpen,
                 )
             } else {
                 EmptyState(modifier = Modifier.align(Alignment.Center))

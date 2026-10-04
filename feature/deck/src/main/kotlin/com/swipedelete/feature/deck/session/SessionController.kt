@@ -168,6 +168,18 @@ class SessionController(
 
     fun currentSession(): DeckSession? = session
 
+    /** The frozen deck items for the running session, in deck order. */
+    fun snapshotItems(): List<MediaItem> = snapshot?.items ?: emptyList()
+
+    /** The item with [id] as the deck captured it, or null when it is not in the deck. */
+    fun item(id: ItemId): MediaItem? = snapshot?.items?.firstOrNull { it.id == id }
+
+    /** Task 30 / §9.4: true when the scan that built this deck was capped. */
+    fun snapshotTruncated(): Boolean = snapshot?.truncated ?: false
+
+    /** How many candidates the scan examined. */
+    fun snapshotScanned(): Int = snapshot?.scanned ?: 0
+
     /** Builds the deck for [query] and persists a fresh ACTIVE session at its start. */
     suspend fun start(query: DeckQuery): DeckState {
         require(query !is DeckQuery.Resume) {

@@ -6,6 +6,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -120,6 +121,11 @@ fun SwipeCard(
      * (AC-19).
      */
     onRevealDock: () -> Unit = {},
+    /**
+     * Tapping the card opens the full-screen viewer (SPEC 5.4). It is a separate
+     * affordance from the four swipe decisions, so opening never deletes.
+     */
+    onOpen: () -> Unit = {},
 ) {
     val colors = SwipeDeleteTheme.colors
     val density = LocalDensity.current
@@ -165,6 +171,7 @@ fun SwipeCard(
     Surface(
         modifier = modifier
             .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
+            .clickable(onClick = onOpen)
             .semantics {
                 customActions = listOf(
                     CustomAccessibilityAction(deleteLabel) { onDecision(Gesture.DELETE); true },
