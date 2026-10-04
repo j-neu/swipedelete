@@ -14,4 +14,6 @@
     <string name="swipe_delete">Delete</string>
     <string name="swipe_keep">Keep</string>
     <string name="swipe_defer">Defer</string>
+    <!-- Drag-down reveals the dock; "Move" is its non-gesture equivalent (AC-19). -->
+    <string name="swipe_move">Move</string>
 </resources>

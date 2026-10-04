@@ -114,6 +114,12 @@ fun SwipeCard(
     onDecision: (Gesture) -> Unit,
     modifier: Modifier = Modifier,
     haptics: DeckHaptics = rememberDeckHaptics(),
+    /**
+     * A drag-down commits nothing but reveals the slot dock (SPEC 5.2); the same
+     * reveal is exposed as the "Move" custom action so it is never drag-only
+     * (AC-19).
+     */
+    onRevealDock: () -> Unit = {},
 ) {
     val colors = SwipeDeleteTheme.colors
     val density = LocalDensity.current
@@ -127,6 +133,7 @@ fun SwipeCard(
     val deleteLabel = stringResource(R.string.swipe_delete)
     val keepLabel = stringResource(R.string.swipe_keep)
     val deferLabel = stringResource(R.string.swipe_defer)
+    val moveLabel = stringResource(R.string.swipe_move)
 
     val liveDirection = SwipeResolver.resolve(
         drag = dragOffset,
@@ -163,6 +170,7 @@ fun SwipeCard(
                     CustomAccessibilityAction(deleteLabel) { onDecision(Gesture.DELETE); true },
                     CustomAccessibilityAction(keepLabel) { onDecision(Gesture.KEEP); true },
                     CustomAccessibilityAction(deferLabel) { onDecision(Gesture.DEFER); true },
+                    CustomAccessibilityAction(moveLabel) { onRevealDock(); true },
                 )
             }
             .pointerInput(item.id) {
@@ -188,7 +196,8 @@ fun SwipeCard(
                             SwipeDirection.LEFT -> onDecision(Gesture.DELETE)
                             SwipeDirection.RIGHT -> onDecision(Gesture.KEEP)
                             SwipeDirection.UP -> onDecision(Gesture.DEFER)
-                            SwipeDirection.DOWN, null -> Unit
+                            SwipeDirection.DOWN -> onRevealDock()
+                            null -> Unit
                         }
                     },
                     onDragCancel = { dragOffset = Offset.Zero },

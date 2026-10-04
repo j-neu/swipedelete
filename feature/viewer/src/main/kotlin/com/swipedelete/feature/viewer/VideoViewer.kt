@@ -41,10 +41,13 @@ import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.swipedelete.core.designsystem.SwipeDeleteDimens
 import com.swipedelete.core.designsystem.SwipeDeleteTheme
 import com.swipedelete.core.model.MediaItem
+import java.io.InputStream
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -255,6 +258,7 @@ class MediaMetadataThumbnailLoader(
  * Exactly one player is created per item and is released on disposal (M1-T11
  * owns the memory ceiling, not this task).
  */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 fun VideoViewer(
     item: MediaItem,
@@ -264,6 +268,11 @@ fun VideoViewer(
         MediaMetadataThumbnailLoader(context, media)
     },
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    /**
+     * When supplied (the shipped path), video plays through a gateway-backed
+     * [GatewayDataSource], so SAF items work; otherwise the item's own URI is used.
+     */
+    streamFactory: ((MediaItem) -> InputStream)? = null,
 ) {
     val context = LocalContext.current
     val player = remember(item.id) { createPlayer(context) }
@@ -316,12 +325,18 @@ fun VideoViewer(
         }
     }
 
-    LaunchedEffect(player, item.id) {
+    LaunchedEffect(player, item.id, streamFactory) {
         playing = false
         positionMs = 0L
         durationMs = item.durationMs ?: 0L
         availableTracks = Tracks.EMPTY
-        player.setMediaItem(toMedia3Item(item))
+        if (streamFactory != null) {
+            val source = ProgressiveMediaSource.Factory(GatewayDataSourceFactory(item, streamFactory))
+                .createMediaSource(toMedia3Item(item))
+            player.setMediaSource(source)
+        } else {
+            player.setMediaItem(toMedia3Item(item))
+        }
         player.prepare()
     }
 

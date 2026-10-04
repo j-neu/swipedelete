@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeDown
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.unit.dp
 import com.swipedelete.core.designsystem.SwipeDeleteTheme
@@ -149,12 +150,25 @@ class SwipeGestureTest {
         assertEquals(Gesture.DELETE, decided, "a fast short drag must commit via velocity")
     }
 
+    @Test
+    fun `a drag down reveals the dock and commits no decision`() {
+        var decided: Gesture? = null
+        var revealed = 0
+        show(onDecision = { decided = it }, onRevealDock = { revealed++ })
+
+        composeRule.onNodeWithTag(SwipeCardTestTag).performTouchInput { swipeDown() }
+
+        assertEquals(1, revealed, "SPEC 5.2: drag-down reveals the dock")
+        assertNull(decided, "drag-down is a dock reveal, not a deck decision")
+    }
+
     // --- Non-gesture equivalents (SPEC 11.4 / AC-19) --------------------------
 
     @Test
     fun `every direction exposes a custom accessibility action`() {
         var decided: Gesture? = null
-        show { decided = it }
+        var revealed = 0
+        show(onDecision = { decided = it }, onRevealDock = { revealed++ })
 
         invokeCustomAction("Delete")
         assertEquals(Gesture.DELETE, decided)
@@ -164,6 +178,9 @@ class SwipeGestureTest {
 
         invokeCustomAction("Defer")
         assertEquals(Gesture.DEFER, decided)
+
+        invokeCustomAction("Move")
+        assertEquals(1, revealed, "the dock reveal must have a non-gesture equivalent (AC-19)")
     }
 
     @Test
@@ -185,13 +202,14 @@ class SwipeGestureTest {
         composeRule.runOnIdle { action.action() }
     }
 
-    private fun show(onDecision: (Gesture) -> Unit) {
+    private fun show(onRevealDock: () -> Unit = {}, onDecision: (Gesture) -> Unit) {
         composeRule.setContent {
             SwipeDeleteTheme {
                 SwipeCard(
                     item = item,
                     onDecision = onDecision,
                     modifier = Modifier.size(320.dp).testTag(SwipeCardTestTag),
+                    onRevealDock = onRevealDock,
                 )
             }
         }

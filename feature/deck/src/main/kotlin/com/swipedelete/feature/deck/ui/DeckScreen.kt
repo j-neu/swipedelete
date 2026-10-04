@@ -51,6 +51,7 @@ fun DeckScreen(
                     onDecision = guardedDecision,
                     modifier = Modifier.fillMaxSize(),
                     haptics = haptics,
+                    onRevealDock = guardedMove,
                 )
             } else {
                 EmptyState(modifier = Modifier.align(Alignment.Center))
