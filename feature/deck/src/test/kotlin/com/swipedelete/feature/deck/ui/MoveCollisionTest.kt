@@ -13,11 +13,16 @@ import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.feature.deck.domain.SlotMoveCoordinator
 import com.swipedelete.feature.deck.domain.SlotMoveOutcome
 import com.swipedelete.feature.deck.domain.SlotTagSink
+import com.swipedelete.feature.deck.session.MutationGate
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -26,6 +31,7 @@ import kotlinx.coroutines.test.runTest
  * against the frozen [com.swipedelete.core.storage.StorageGateway] contract
  * through [SlotMoveCoordinator], so the ` (1)` / ` (2)` rule is the gateway's.
  */
+@OptIn(ExperimentalCoroutinesApi::class)
 class MoveCollisionTest {
 
     private val source = SourceRef(
@@ -165,6 +171,27 @@ class MoveCollisionTest {
         assertTrue(result is SlotMoveOutcome.DestinationUnavailable)
         assertTrue(gw.fileExists("fake://primary/a.gif"))
         assertEquals(0, gw.faultInjector.operationCount())
+    }
+
+    @Test
+    fun `a move waits for the recovery gate before touching the gateway`() = runTest {
+        val gw = gateway()
+        val original = item("fake://primary/a.gif", "i1")
+        gw.register(original)
+        val ready = CompletableDeferred<Unit>()
+        val coordinator = SlotMoveCoordinator(gw, gate = MutationGate { ready.await() })
+
+        val job = launch { coordinator.apply(moveSlot(), original) }
+        advanceUntilIdle()
+
+        assertEquals(0, gw.faultInjector.operationCount(), "D6: no move may run before recovery readiness")
+        assertTrue(gw.fileExists("fake://primary/a.gif"))
+
+        ready.complete(Unit)
+        job.join()
+
+        assertEquals(1, gw.faultInjector.operationCount(), "once ready, the move runs exactly once")
+        assertFalse(gw.fileExists("fake://primary/a.gif"))
     }
 
     private class RecordingTagSink : SlotTagSink {

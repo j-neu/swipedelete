@@ -67,6 +67,53 @@ class DeckBuilderTest {
         assertTrue(builder.build(DeckQuery.Folder(SourceId("never-granted"))).items.isEmpty())
     }
 
+    @Test
+    fun `a truncated scan is carried on the snapshot so a partial deck is observable`() = runTest {
+        val source = sourceRef("s")
+        val capped = FakeScanPort(
+            page(listOf(mediaItem("a", "content://tree/s/a.jpg")), next = null, truncated = true),
+        )
+        val gateway = FakeStorageGateway().apply { addSource(source) }
+
+        val snapshot = DeckBuilder({ capped }, gateway, FixedClock(0L)).build(DeckQuery.Folder(source.id))
+
+        assertTrue(snapshot.truncated, "Task 30: a capped walk must say so, not look complete")
+        assertEquals(1, snapshot.scanned, "the snapshot must carry how much the walk examined")
+    }
+
+    @Test
+    fun `a complete scan is not marked truncated`() = runTest {
+        val source = sourceRef("s")
+        val gateway = FakeStorageGateway().apply { addSource(source) }
+        val port = FakeScanPort(page(listOf(mediaItem("a", "content://tree/s/a.jpg"))))
+
+        val snapshot = DeckBuilder({ port }, gateway, FixedClock(0L)).build(DeckQuery.Folder(source.id))
+
+        assertTrue(!snapshot.truncated)
+    }
+
+    @Test
+    fun `a smart deck aggregates truncation across every source it scans`() = runTest {
+        val first = sourceRef("first")
+        val second = sourceRef("second")
+        val gateway = FakeStorageGateway().apply {
+            addSource(first)
+            addSource(second)
+        }
+        val ports = mapOf(
+            first.id to FakeScanPort(page(listOf(mediaItem("a", "content://tree/first/a.jpg", sourceId = first.id)))),
+            second.id to FakeScanPort(
+                page(listOf(mediaItem("b", "content://tree/second/b.jpg", sourceId = second.id)), truncated = true),
+            ),
+        )
+        val builder = DeckBuilder({ source -> ports.getValue(source.id) }, gateway, FixedClock(0L))
+
+        val snapshot = builder.build(DeckQuery.Smart(SmartRule.LARGEST_FIRST))
+
+        assertTrue(snapshot.truncated, "one truncated source makes the whole deck partial")
+        assertEquals(2, snapshot.scanned)
+    }
+
     // --- Smart decks ----------------------------------------------------------
 
     @Test

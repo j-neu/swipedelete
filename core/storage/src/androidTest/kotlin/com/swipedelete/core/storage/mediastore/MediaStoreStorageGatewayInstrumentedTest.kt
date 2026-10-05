@@ -7,6 +7,7 @@ import android.database.ContentObserver
 import android.database.Cursor
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -44,9 +45,7 @@ import kotlin.test.assertTrue
  * The frozen [StorageGatewayContractTest] run against the **real** MediaStore
  * path on a device or emulator, plus a MediaStore-specific identity assertion.
  *
- * **This test is written but has NOT been run**: there is no booted device in
- * the Task 29 session. The device pass belongs to the M1 device/CI task and
- * runs `.\gradlew.bat :core:storage:connectedDebugAndroidTest`.
+ * The device pass runs via `.\gradlew.bat :core:storage:connectedDebugAndroidTest`.
  *
  * ### Why there is a [ContractGateway] adapter
  * The frozen contract addresses items through synthetic `fake://primary/a.gif`
@@ -163,21 +162,42 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
             if (sdkInt >= Build.VERSION_CODES.Q) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, scope)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
+            } else {
+                // Pre-Q MediaStore has no RELATIVE_PATH/IS_PENDING: a row is
+                // indexed from a real file under the public Pictures directory,
+                // named by DATA. This keeps the fixture honest on API 26-28
+                // instead of skipping them.
+                val file = fileFor(scope, name)
+                file.parentFile?.mkdirs()
+                file.writeBytes(ByteArray(item.sizeBytes.coerceAtMost(4096L).toInt()))
+                put(MediaStore.MediaColumns.DATA, file.absolutePath)
             }
         }
         val uri = resolver.insert(imagesUri, values) ?: error("MediaStore refused $name")
-        resolver.openOutputStream(uri)?.use { it.write(ByteArray(item.sizeBytes.coerceAtMost(4096L).toInt())) }
         if (sdkInt >= Build.VERSION_CODES.Q) {
+            resolver.openOutputStream(uri)?.use { it.write(ByteArray(item.sizeBytes.coerceAtMost(4096L).toInt())) }
             resolver.update(uri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
         }
     }
 
     private fun clearTestRows() {
-        if (sdkInt < Build.VERSION_CODES.Q) return
-        runCatching {
-            resolver.delete(imagesUri, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("$ROOT%"))
+        if (sdkInt >= Build.VERSION_CODES.Q) {
+            runCatching {
+                resolver.delete(imagesUri, "${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ?", arrayOf("$ROOT%"))
+            }
+        } else {
+            runCatching {
+                resolver.delete(imagesUri, "${MediaStore.MediaColumns.DATA} LIKE ?", arrayOf("%/$ROOT/%"))
+            }
+            runCatching { picturesRoot().deleteRecursively() }
         }
     }
+
+    private fun fileFor(scope: String, name: String): File =
+        File(picturesRoot(), scope.removePrefix("$ROOT/") + name)
+
+    private fun picturesRoot(): File =
+        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), ROOT)
 
     /** The real catalogue rows, as the concrete gateway sees them. */
     private fun catalogue(): List<MediaItem> = runBlocking {

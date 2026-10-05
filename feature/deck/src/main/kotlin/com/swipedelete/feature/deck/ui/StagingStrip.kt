@@ -27,13 +27,8 @@ import com.swipedelete.core.designsystem.SwipeDeleteDimens
 import com.swipedelete.core.designsystem.SwipeDeleteTheme
 import com.swipedelete.core.designsystem.components.DestructiveAction
 import com.swipedelete.core.designsystem.components.StagingStrip as DesignSystemStagingStrip
-import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.MediaItem
-import com.swipedelete.core.storage.QuarantineResult
-import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.R
-import com.swipedelete.feature.deck.session.MutationGate
-import java.util.UUID
 
 /** The preview grid the Apply confirmation renders (SPEC 6.6). */
 const val StagingPreviewGridTestTag: String = "staging_preview_grid"
@@ -48,39 +43,14 @@ const val StagingApplyConfirmTestTag: String = "staging_apply_confirm"
 private const val PreviewTileLimit: Int = 12
 
 /**
- * The Apply path (SPEC 5.2, decision 3; D6).
- *
- * `:feature:deck` cannot depend on `:app`'s `RecoveryCoordinator`, so recovery
- * readiness arrives through the same [MutationGate] seam the session layer uses;
- * the composition root binds it to `RecoveryCoordinator::awaitReady`. [await] is
- * called **before** the destructive call, so an unresolved journal blocks
- * mutation (the safe direction) instead of allowing it.
- *
- * The whole staged set is handed to a single [StorageGateway.quarantine] call:
- * one batch, one journal write-ahead sequence, one outcome. Nothing is destroyed
- * on the swipe itself.
- */
-class StagingApplier(
-    private val gateway: StorageGateway,
-    private val readiness: MutationGate,
-    private val batches: () -> BatchId = { BatchId("batch-${UUID.randomUUID()}") },
-) {
-    suspend fun apply(staged: List<MediaItem>): QuarantineResult {
-        val batch = batches()
-        if (staged.isEmpty()) return QuarantineResult.Quarantined(batch, emptyList())
-        readiness.await()
-        return gateway.quarantine(staged, batch)
-    }
-}
-
-/**
  * The deck-side staging strip (SPEC 5.2 / 6.6). It reuses the design system's
  * [DesignSystemStagingStrip] ("N to delete · Undo"), so a staged delete is
  * visible and recoverable, and it owns exactly one confirmation for Apply:
  * count, bytes and a preview grid of the staged set (§6.6).
  *
  * Presentation-only: it never touches storage. The caller supplies [onApply],
- * typically `{ scope.launch { applier.apply(staged) } }`.
+ * wired to the session-owned [com.swipedelete.feature.deck.session.SessionController.applyStaged]
+ * path (there is exactly one Apply path; the old [StagingApplier] was removed).
  */
 @Composable
 fun StagingStrip(

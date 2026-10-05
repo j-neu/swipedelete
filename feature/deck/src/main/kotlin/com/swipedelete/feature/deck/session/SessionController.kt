@@ -8,9 +8,13 @@ import com.swipedelete.core.database.entity.DeckSessionEntity
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.DeckSession
 import com.swipedelete.core.model.DeckStatus
+import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SessionId
+import com.swipedelete.core.model.Slot
 import com.swipedelete.core.model.SlotId
+import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.DeckAction
 import com.swipedelete.feature.deck.domain.DeckBuilder
 import com.swipedelete.feature.deck.domain.DeckQuery
@@ -18,6 +22,8 @@ import com.swipedelete.feature.deck.domain.DeckReducer
 import com.swipedelete.feature.deck.domain.DeckSnapshot
 import com.swipedelete.feature.deck.domain.DeckState
 import com.swipedelete.feature.deck.domain.Gesture
+import com.swipedelete.feature.deck.domain.SlotMoveCoordinator
+import com.swipedelete.feature.deck.domain.SlotMoveOutcome
 import java.util.UUID
 
 /**
@@ -45,6 +51,22 @@ interface SessionMutations {
 
     /** Restores every quarantined item belonging to [session] and returns the count. */
     suspend fun restoreSession(session: SessionId): Int
+
+    /**
+     * Non-null when [item] must not be destroyed because it changed on disk since
+     * the deck was built (AC-8 / §9.5). Production re-reads metadata through the
+     * gateway; the default is "unchanged", which keeps this a drop-in seam.
+     */
+    suspend fun staleReason(item: MediaItem): String? = null
+}
+
+/** A staged item that was skipped by Apply because it changed on disk (AC-8). */
+data class StaleAbort(val item: MediaItem, val reason: String)
+
+/** The outcome of committing the staging strip (SPEC 5.5 / 6.6). */
+data class ApplyResult(val quarantined: Int, val aborted: List<StaleAbort>) {
+    val applied: Int get() = quarantined
+    val hasAborts: Boolean get() = aborted.isNotEmpty()
 }
 
 /** The exit prompt shown when the staging strip is non-empty (SPEC 5.5). */
@@ -62,6 +84,12 @@ data class SessionSummary(
     val kept: Int,
     val movedBySlot: Map<SlotId, Int>,
     val staged: Int,
+    /**
+     * Items whose staged delete has actually run (moved to quarantine). Counted
+     * from [DeckState.decided] crossed with the Delete history, so after an Apply
+     * they leave [staged] and appear here instead (finding M1-T15-7).
+     */
+    val quarantined: Int,
     val deferred: Int,
     val measuredFreedBytes: Long,
     val reclaimableBytes: Long,
@@ -88,7 +116,11 @@ fun sessionSummary(
     movedBySlot = state.history.filterIsInstance<DeckAction.Move>()
         .groupingBy { it.slot }
         .eachCount(),
-    staged = state.history.count { it is DeckAction.Delete },
+    staged = state.staged.size,
+    // Apply moves staged deletes to `decided`; they are quarantined, not freed
+    // (AC-9) and no longer staged. Deriving this from history alone would keep
+    // reporting them as staged forever.
+    quarantined = state.decided.count { id -> state.history.any { it is DeckAction.Delete && it.item == id } },
     deferred = state.history.count { it is DeckAction.Defer },
     measuredFreedBytes = measuredFreedBytes,
     reclaimableBytes = reclaimableBytes,
@@ -115,9 +147,18 @@ class SessionController(
     private val reclaimable: suspend () -> Long,
     private val sessionIds: () -> SessionId = { SessionId("session-${UUID.randomUUID()}") },
     private val batches: () -> BatchId = { BatchId("batch-${UUID.randomUUID()}") },
+    /**
+     * The concrete gateway a slot MOVE runs through, so a move can be undone by
+     * moving the file back (finding M1-T15-5). Null in pure-state tests; the
+     * composition root supplies the journaled gateway.
+     */
+    private val gateway: StorageGateway? = null,
 ) {
 
-    private val undo = UndoStack()
+    private val moveOrigins = HashMap<ItemId, MediaItem>()
+    private val moveCurrent = HashMap<ItemId, MediaItem>()
+
+    private val undo = UndoStack { action -> undoMove(action) }
 
     private var session: DeckSession? = null
     private var snapshot: DeckSnapshot? = null
@@ -126,6 +167,18 @@ class SessionController(
     fun currentState(): DeckState = state
 
     fun currentSession(): DeckSession? = session
+
+    /** The frozen deck items for the running session, in deck order. */
+    fun snapshotItems(): List<MediaItem> = snapshot?.items ?: emptyList()
+
+    /** The item with [id] as the deck captured it, or null when it is not in the deck. */
+    fun item(id: ItemId): MediaItem? = snapshot?.items?.firstOrNull { it.id == id }
+
+    /** Task 30 / §9.4: true when the scan that built this deck was capped. */
+    fun snapshotTruncated(): Boolean = snapshot?.truncated ?: false
+
+    /** How many candidates the scan examined. */
+    fun snapshotScanned(): Int = snapshot?.scanned ?: 0
 
     /** Builds the deck for [query] and persists a fresh ACTIVE session at its start. */
     suspend fun start(query: DeckQuery): DeckState {
@@ -204,24 +257,97 @@ class SessionController(
     }
 
     /**
-     * "Apply": the destructive commit (SPEC 5.5 / 6.6). It waits for
-     * [MutationGate] before moving a single byte (D6), quarantines the staged
-     * items, then clears them from the strip while keeping them in the session
-     * history. Returns how many items were quarantined.
+     * Reverts the history entry at [index] through the real [UndoStack]. A move
+     * entry's file operation is undone through [gateway] (finding M1-T15-5).
      */
-    suspend fun applyStaged(): Int {
+    suspend fun revert(index: Int): DeckState {
+        val current = requireSession()
+        val next = undo.revert(state, index)
+        state = next
+        persist(current.id, next)
+        return next
+    }
+
+    /** Two-finger tap (SPEC 5.2): revert the newest history entry. */
+    suspend fun undoLast(): DeckState {
+        val current = requireSession()
+        val next = undo.undoLast(state)
+        state = next
+        persist(current.id, next)
+        return next
+    }
+
+    /**
+     * Drops [item] on [slot] through the gated [SlotMoveCoordinator] and records
+     * the origin/current location so [undoLast]/[revert] can move it back. The
+     * move itself is a destructive verb and waits on [MutationGate] (D6).
+     */
+    suspend fun applySlotMove(slot: Slot, item: MediaItem): SlotMoveOutcome {
+        val current = requireSession()
+        val gw = gateway ?: return SlotMoveOutcome.Failed("move_unavailable")
+        val origin = snapshot?.items?.firstOrNull { it.id == item.id } ?: item
+        val outcome = SlotMoveCoordinator(gw, gate = gate, nowMillis = { clock.nowMillis() }).apply(slot, item)
+        when (outcome) {
+            is SlotMoveOutcome.Moved -> {
+                moveOrigins[item.id] = origin
+                moveCurrent[item.id] = outcome.to
+            }
+            is SlotMoveOutcome.Renamed -> {
+                moveOrigins[item.id] = origin
+                moveCurrent[item.id] = outcome.to
+            }
+            else -> Unit
+        }
+        if (outcome is SlotMoveOutcome.Moved || outcome is SlotMoveOutcome.Renamed) {
+            state = DeckReducer.reduce(state, Gesture.MOVE, slot.id)
+            persist(current.id, state)
+        }
+        return outcome
+    }
+
+    /**
+     * "Apply": the destructive commit (SPEC 5.5 / 6.6). It waits for
+     * [MutationGate] before moving a single byte (D6), re-checks each staged
+     * item against the gateway (AC-8) and aborts the ones that changed on disk
+     * with a visible reason, then quarantines the rest and clears them from the
+     * strip while keeping them in the session history.
+     */
+    suspend fun applyStaged(): ApplyResult {
         val current = requireSession()
         val items = state.staged.mapNotNull { id -> snapshot?.items?.firstOrNull { it.id == id } }
-        if (items.isEmpty()) return 0
+        if (items.isEmpty()) return ApplyResult(quarantined = 0, aborted = emptyList())
         gate.await()
-        val moved = mutations.quarantine(items, batches())
-        val applied = items.map { it.id }
+        val aborted = ArrayList<StaleAbort>()
+        val fresh = ArrayList<MediaItem>(items.size)
+        items.forEach { item ->
+            val reason = mutations.staleReason(item)
+            if (reason == null) fresh += item else aborted += StaleAbort(item, reason)
+        }
+        val moved = if (fresh.isEmpty()) 0 else mutations.quarantine(fresh, batches())
+        val applied = fresh.mapTo(mutableSetOf()) { it.id }
         state = state.copy(
+            // Aborted items stay staged so they are not silently destroyed.
             staged = state.staged.filterNot { it in applied },
             decided = state.decided + applied,
         )
         persist(current.id, state)
-        return moved
+        return ApplyResult(quarantined = moved, aborted = aborted)
+    }
+
+    /** Moves a moved item back to the location the deck captured for it. */
+    private suspend fun undoMove(action: DeckAction.Move) {
+        val gw = gateway ?: return
+        val current = moveCurrent[action.item] ?: return
+        val origin = moveOrigins[action.item] ?: return
+        val originSource = gw.sources().firstOrNull { it.id == origin.sourceId } ?: return
+        val originDirectory = origin.relativePath
+            ?.substringBeforeLast('/', missingDelimiterValue = "")
+            ?.trim('/')
+            ?.takeIf { it.isNotEmpty() }
+        gate.await()
+        gw.move(current, Destination(originSource, originDirectory))
+        moveOrigins.remove(action.item)
+        moveCurrent.remove(action.item)
     }
 
     /**

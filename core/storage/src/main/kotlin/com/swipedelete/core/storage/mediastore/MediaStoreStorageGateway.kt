@@ -32,6 +32,8 @@ import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.saf.SafStorageGateway
+import com.swipedelete.core.storage.scan.ScanPage
+import com.swipedelete.core.storage.scan.SourceScanPort
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.currentCoroutineContext
@@ -39,6 +41,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.map
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.FileNotFoundException
@@ -97,7 +100,7 @@ class MediaStoreStorageGateway(
     private val quarantineStore: QuarantineStore? = null,
     private val pageSize: Int = DEFAULT_PAGE_SIZE,
     private val sdkInt: Int = Build.VERSION.SDK_INT,
-) : StorageGateway, ItemLocator {
+) : StorageGateway, ItemLocator, SourceScanPort {
 
     init {
         require(pageSize > 0) { "pageSize must be positive, was $pageSize" }
@@ -143,6 +146,21 @@ class MediaStoreStorageGateway(
             }
             if (lastPage) break
             offset += rows
+        }
+    }
+
+    /**
+     * The MediaStore catalogue is an index, not a filesystem walk, so a scan is
+     * exactly [enumerate] with cumulative progress attached; it is never
+     * truncated (there is no depth/entry cap to hit). This makes a media source
+     * usable through the same read-only [SourceScanPort] the deck scans a SAF
+     * source with (Task 30).
+     */
+    override fun scan(source: SourceRef, page: PageToken?): Flow<ScanPage> {
+        var scanned = 0
+        return enumerate(source, page).map { paged ->
+            scanned += paged.items.size
+            ScanPage(items = paged.items, next = paged.next, truncated = false, scanned = scanned)
         }
     }
 

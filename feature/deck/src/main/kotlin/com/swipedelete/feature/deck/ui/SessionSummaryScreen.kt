@@ -66,6 +66,7 @@ fun SessionSummaryScreen(
                 SummaryLine(stringResource(R.string.session_summary_moved_to_slot, count, slot.value))
             }
             SummaryLine(stringResource(R.string.session_summary_staged, summary.staged))
+            SummaryLine(stringResource(R.string.session_summary_quarantined, summary.quarantined))
             SummaryLine(stringResource(R.string.session_summary_deferred, summary.deferred))
             SummaryLine(summary.reclaimableText)
             if (summary.measuredFreedBytes > 0L) {

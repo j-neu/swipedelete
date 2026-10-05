@@ -70,4 +70,34 @@ class NavGraphTest {
         )
         assertEquals("viewer/abc", Destinations.viewer("abc"))
     }
+
+    @Test
+    fun `the viewer route passes its item id to the viewer destination`() {
+        val navController = TestNavHostController(ApplicationProvider.getApplicationContext())
+        navController.navigatorProvider.addNavigator(ComposeNavigator())
+        var received: String? = null
+
+        composeTestRule.setContent {
+            SwipeDeleteTheme {
+                AppNavHost(
+                    navController = navController,
+                    startDestination = Destinations.DECK,
+                    onboardingScreen = {},
+                    settingsScreen = {},
+                    deckScreen = {},
+                    viewerScreen = { itemId -> received = itemId },
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        navController.navigate(Destinations.viewer("img-7"))
+        composeTestRule.waitForIdle()
+
+        assertEquals(
+            "img-7",
+            received,
+            "opening an item must route the item id to the viewer (finding M1-T15-1)",
+        )
+    }
 }

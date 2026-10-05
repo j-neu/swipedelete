@@ -14,6 +14,7 @@
     <string name="session_summary_kept">Kept %1$d</string>
     <string name="session_summary_moved_to_slot">Moved %1$d to slot %2$d</string>
     <string name="session_summary_staged">Staged for deletion %1$d</string>
+    <string name="session_summary_quarantined">Quarantined (recoverable) %1$d</string>
     <string name="session_summary_deferred">Deferred %1$d</string>
     <string name="session_summary_restore_everything">Restore everything from this session</string>
     <string name="session_summary_exit_prompt">%1$d items are staged for deletion. What should happen to them?</string>

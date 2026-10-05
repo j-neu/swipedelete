@@ -122,7 +122,7 @@ fun ViewerScreen(
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     apkInspector: ApkInspector = rememberAndroidApkInspector(ioDispatcher),
     onOpenWith: (MediaItem) -> Unit = rememberOpenWithHandler(),
-    videoContent: @Composable (MediaItem) -> Unit = { VideoViewer(item = it) },
+    videoContent: @Composable (MediaItem) -> Unit = { VideoViewer(item = it, streamFactory = openStream) },
 ) {
     if (pager.items.isEmpty()) return
 
@@ -161,6 +161,7 @@ fun ViewerScreen(
                 apkInspector = apkInspector,
                 onOpenWith = onOpenWith,
                 videoContent = videoContent,
+                streamFactory = openStream,
             )
         }
 
@@ -189,6 +190,7 @@ private fun ViewerContent(
     apkInspector: ApkInspector,
     onOpenWith: (MediaItem) -> Unit,
     videoContent: @Composable (MediaItem) -> Unit,
+    streamFactory: (MediaItem) -> InputStream,
 ) {
     val fallback: @Composable () -> Unit = {
         UnsupportedCard(item = item, reason = UnsupportedReason.UNDECODABLE, onOpenWith = onOpenWith)
@@ -197,7 +199,7 @@ private fun ViewerContent(
     when (viewerContentKind(item)) {
         ViewerContentKind.VIDEO -> videoContent(item)
 
-        ViewerContentKind.AUDIO -> AudioViewer(item)
+        ViewerContentKind.AUDIO -> AudioViewer(item = item, streamFactory = streamFactory)
 
         ViewerContentKind.APK -> ApkCard(
             item = item,

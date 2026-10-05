@@ -80,7 +80,30 @@ class SessionSummaryTest {
         assertEquals(1, summary.kept)
         assertEquals(mapOf(SlotId(2) to 2), summary.movedBySlot)
         assertEquals(1, summary.staged)
+        assertEquals(0, summary.quarantined)
         assertEquals(1, summary.deferred)
+    }
+
+    @Test
+    fun `applied staged items move from staged to the quarantined bucket`() {
+        // An Apply empties staging and records the item as decided (quarantined).
+        val applied = DeckState(
+            items = (2..5).map { ItemId("i$it") },
+            staged = emptyList(),
+            decided = listOf(ItemId("i1")),
+            history = listOf(com.swipedelete.feature.deck.domain.DeckAction.Delete(ItemId("i1"), at = 0)),
+        )
+
+        val summary = sessionSummary(
+            sessionId = SessionId("s1"),
+            state = applied,
+            measuredFreedBytes = 0L,
+            reclaimableBytes = 4L * MB,
+            status = DeckStatus.ACTIVE,
+        )
+
+        assertEquals(0, summary.staged, "a quarantined item is no longer staged")
+        assertEquals(1, summary.quarantined)
     }
 
     @Test
@@ -146,6 +169,7 @@ class SessionSummaryTest {
         kept = 3,
         movedBySlot = mapOf(SlotId(2) to 4),
         staged = 5,
+        quarantined = 1,
         deferred = 1,
         measuredFreedBytes = 0L,
         reclaimableBytes = reclaimableBytes,

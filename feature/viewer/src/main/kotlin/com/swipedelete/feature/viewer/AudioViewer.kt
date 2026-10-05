@@ -22,10 +22,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import com.swipedelete.core.designsystem.SwipeDeleteDimens
 import com.swipedelete.core.model.MediaItem
 import java.io.File
+import java.io.InputStream
 import kotlinx.coroutines.delay
 
 /**
@@ -33,15 +36,17 @@ import kotlinx.coroutines.delay
  *
  * The player needs a seekable data source of its own, not a caller-supplied
  * `InputStream`: feeding a stream would mean buffering the whole file and
- * giving up seeking, which is the opposite of a transport. So audio is played
- * from the item's own URI (`content://` for MediaStore, `file://` otherwise),
- * which `StorageGateway.openStream` cannot express. Images and animated images
- * do use the gateway's stream.
+ * giving up seeking, which is the opposite of a transport. When [streamFactory]
+ * is supplied (the shipped path), audio is played through a gateway-backed
+ * [GatewayDataSource] so SAF items work; otherwise it falls back to the item's
+ * own URI.
  */
+@androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 @Composable
 fun AudioViewer(
     item: MediaItem,
     modifier: Modifier = Modifier,
+    streamFactory: ((MediaItem) -> InputStream)? = null,
 ) {
     val context = LocalContext.current
     val player = remember(item.id) { ExoPlayer.Builder(context).build() }
@@ -69,11 +74,17 @@ fun AudioViewer(
         }
     }
 
-    LaunchedEffect(player, item.id) {
+    LaunchedEffect(player, item.id, streamFactory) {
         playing = false
         positionMs = 0L
         durationMs = item.durationMs ?: 0L
-        player.setMediaItem(toMedia3Item(item))
+        if (streamFactory != null) {
+            val source = ProgressiveMediaSource.Factory(GatewayDataSourceFactory(item, streamFactory))
+                .createMediaSource(toMedia3Item(item))
+            player.setMediaSource(source)
+        } else {
+            player.setMediaItem(toMedia3Item(item))
+        }
         player.prepare()
     }
 

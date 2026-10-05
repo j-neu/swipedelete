@@ -14,4 +14,13 @@
     <string name="swipe_delete">Delete</string>
     <string name="swipe_keep">Keep</string>
     <string name="swipe_defer">Defer</string>
+    <!-- Drag-down reveals the dock; "Move" is its non-gesture equivalent (AC-19). -->
+    <string name="swipe_move">Move</string>
+    <!-- Task 30 / §9.4: a capped walk is shown as partial, never as complete. -->
+    <string name="deck_partial_banner">Partial deck — the scan stopped early after %1$d items seen</string>
+    <!-- AC-8: an item that changed on disk is aborted with a visible reason. -->
+    <string name="deck_stale_abort">%1$d item(s) changed on disk and were not deleted: %2$s</string>
+    <string name="deck_move_unavailable">That slot destination is no longer available</string>
+    <string name="deck_empty">No sources to review yet</string>
+    <string name="deck_dismiss">Dismiss</string>
 </resources>

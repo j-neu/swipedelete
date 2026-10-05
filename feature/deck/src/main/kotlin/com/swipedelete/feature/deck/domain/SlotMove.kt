@@ -8,6 +8,7 @@ import com.swipedelete.core.model.Tag
 import com.swipedelete.core.storage.Destination
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.StorageGateway
+import com.swipedelete.feature.deck.session.MutationGate
 
 /**
  * Decision 4 (SPEC 5.3): a slot whose destination is set moves the file by
@@ -54,11 +55,15 @@ sealed interface SlotMoveOutcome {
  * copy -> verify -> delete cancellation semantics are the gateway's contract
  * (AC-15), so this class contains no move logic of its own. A TAG slot never
  * reaches the gateway at all.
+ *
+ * A MOVE is a destructive verb (D6), so it waits on [MutationGate] before the
+ * gateway call — a move cannot run before recovery reconciliation completes.
  */
 class SlotMoveCoordinator(
     private val gateway: StorageGateway,
     private val tags: SlotTagSink = SlotTagSink.NoOp,
     private val nowMillis: () -> Long = { 0L },
+    private val gate: MutationGate = MutationGate { },
 ) {
 
     suspend fun apply(slot: Slot, item: MediaItem): SlotMoveOutcome {
@@ -71,6 +76,7 @@ class SlotMoveCoordinator(
             gateway.sources().firstOrNull { it.treeUri == uri }
         } ?: return SlotMoveOutcome.DestinationUnavailable(slot.destinationUri)
 
+        gate.await()
         return when (val result = gateway.move(item, Destination(destination))) {
             is MoveResult.Moved -> SlotMoveOutcome.Moved(result.to)
             is MoveResult.NameCollision -> SlotMoveOutcome.Renamed(result.resolvedTo)
