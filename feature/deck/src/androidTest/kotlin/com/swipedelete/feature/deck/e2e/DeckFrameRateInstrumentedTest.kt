@@ -74,9 +74,11 @@ class DeckFrameRateInstrumentedTest {
         assumeTrue("frame-rate run not requested (pass deckFps=true)", requested)
         harness // Write the images and assemble the deck before the activity starts.
         val frames = CopyOnWriteArrayList<Long>()
+        val stages = CopyOnWriteArrayList<LongArray>()
         val listener = Window.OnFrameMetricsAvailableListener { _, metrics, _ ->
             if (metrics.getMetric(FrameMetrics.FIRST_DRAW_FRAME) == 0L) {
                 frames += metrics.getMetric(FrameMetrics.TOTAL_DURATION)
+                stages += LongArray(STAGES.size) { metrics.getMetric(STAGES[it].second) }
             }
         }
 
@@ -118,14 +120,17 @@ class DeckFrameRateInstrumentedTest {
             scenario.onActivity { it.window.removeOnFrameMetricsAvailableListener(listener) }
 
             report(frames.toList(), refreshRate, elapsedMs)
+            reportStages(stages.toList())
 
             assertEquals(itemCount, state.deck.history.size, "every card must have been decided by touch")
             assertEquals(itemCount / 5 + if (itemCount % 5 == 0) 0 else 1, state.staged.size)
             assertTrue(frames.size > itemCount, "the run must have drawn frames to measure, was ${frames.size}")
 
             // "With full undo": every decision is reverted, back to the first card.
+            val undoStarted = SystemClock.uptimeMillis()
             repeat(itemCount) { harness.viewModel.undoLast() }
-            waitUntil("the full undo") { state.deck.history.isEmpty() }
+            waitForProgress("the full undo", { state.deck.history.size }) { state.deck.history.isEmpty() }
+            Log.i("DeckFps", "full undo of $itemCount decisions took ${SystemClock.uptimeMillis() - undoStarted} ms")
             assertEquals<ItemId?>(first, state.current?.id)
             assertTrue(state.staged.isEmpty() && state.deck.kept.isEmpty())
             assertTrue(harness.files.all { it.exists() }, "staging and undo never touch a file")
@@ -168,6 +173,21 @@ class DeckFrameRateInstrumentedTest {
         }
     }
 
+    /** Like [waitUntil], but the clock restarts whenever [progress] changes: only a stall fails. */
+    private fun waitForProgress(what: String, progress: () -> Int, condition: () -> Boolean) {
+        var last = progress()
+        var deadline = SystemClock.uptimeMillis() + WAIT_MS
+        while (!condition()) {
+            val now = progress()
+            if (now != last) {
+                last = now
+                deadline = SystemClock.uptimeMillis() + WAIT_MS
+            }
+            check(SystemClock.uptimeMillis() < deadline) { "stalled waiting for $what at $now; error=${state.error}" }
+            SystemClock.sleep(2)
+        }
+    }
+
     private fun report(totalNanos: List<Long>, refreshRate: Float, elapsedMs: Long) {
         val ms = totalNanos.map { it / 1_000_000.0 }.sorted()
         fun percentile(p: Double) = ms[((ms.size - 1) * p).toInt()]
@@ -185,8 +205,28 @@ class DeckFrameRateInstrumentedTest {
         )
     }
 
+    /** Where the frame time goes: the median and p90 of each pipeline stage. */
+    private fun reportStages(perFrame: List<LongArray>) {
+        if (perFrame.isEmpty()) return
+        val line = STAGES.indices.joinToString(" ") { stage ->
+            val ms = perFrame.map { it[stage] / 1_000_000.0 }.sorted()
+            "%s=%.1f/%.1f".format(STAGES[stage].first, ms[(ms.size - 1) / 2], ms[((ms.size - 1) * 0.9).toInt()])
+        }
+        Log.i(TAG, "stages p50/p90 ms: $line")
+    }
+
     private companion object {
         const val TAG = "DeckFps"
+        val STAGES = listOf(
+            "delay" to FrameMetrics.UNKNOWN_DELAY_DURATION,
+            "input" to FrameMetrics.INPUT_HANDLING_DURATION,
+            "anim" to FrameMetrics.ANIMATION_DURATION,
+            "layout" to FrameMetrics.LAYOUT_MEASURE_DURATION,
+            "draw" to FrameMetrics.DRAW_DURATION,
+            "sync" to FrameMetrics.SYNC_DURATION,
+            "issue" to FrameMetrics.COMMAND_ISSUE_DURATION,
+            "swap" to FrameMetrics.SWAP_BUFFERS_DURATION,
+        )
         const val SWIPE_STEPS = 12
         const val SWIPE_STEP_MS = 10L
         const val DWELL_MS = 120L

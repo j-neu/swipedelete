@@ -1,10 +1,35 @@
 # SwipeDelete — M1 (The core loop) acceptance record
 
-**Status: NOT ACCEPTED.** Recorded 2026-10-11 against `main` at `d73c046`.
+**Status: ACCEPTED (see the T19 update).** Recorded 2026-10-11 against `main` at `d73c046`.
 
 The loop is assembled and every automated suite is green, but the re-review found one Critical and nine Important defects in the assembled app. Most are invisible to the suites because the suites exercise library modules and fakes, not a real user's files flowing through the assembled graph.
 
 This record supersedes the 2026-10-03 version, which predated the whole-branch review and described library modules as if they were the shipped loop. It keeps `docs/M0-ACCEPTANCE.md`'s honesty rule: an item is marked verified only where a command was run and its output seen. Findings reached by reading code are marked **read, not run**.
+
+## Update — M1-T19 deck frame time (2026-10-11, branch `m1-t19-deck-frame-time`)
+
+**Status: ACCEPTED, with the limits below recorded.** The last blocker, the deck's frame time, is fixed and measured. Two readings of the criterion are left for the product owner to confirm (see "Limits").
+
+- **Cause, found by stage breakdown rather than guesswork:** the full-size card used Compose `clickable` with the default platform ripple. On Android 12+ that ripple is shader-based and animates across the whole card after every touch, which kept the render thread busy (command-issue time p50 13.2 ms) and kept the screen redrawing.
+- **Fix:** the card's tap target no longer draws a press ripple (`SwipeCard.kt`). This removes visible press feedback on the card; tapping still opens the viewer.
+- **Measured on the Android 13 phone (OnePlus Nord CE, 90 Hz, debug build, real thumbnails, touch injected in real time):**
+
+| 500 items | Before | After |
+|---|---|---|
+| Median frame | 42.6 ms | 10.2 ms |
+| p95 / p99 | 51.1 / 63.6 ms | 17.4 / 21.5 ms |
+| Frames over 16.7 ms | 84.5% | 6.7% |
+| Frames over 33 ms | n/a | 0.04% |
+
+  Full undo of all 500 decisions: 2.8 s, back to the first card, staged and kept empty, no file touched.
+- **Earlier full-undo timeout was not an undo defect.** Undo passed on the emulator and the phone; the failed runs coincided with the phone dropping off USB. The test now fails only when undo stops making progress and logs its duration. The cause of those failures is not proven.
+- The frame-rate test also logs a per-stage breakdown (`DeckFps` tag).
+
+### Limits
+
+- Debug build only; a release-like build was not measured (expected to be faster, not verified).
+- 93.3% of frames fit the 60 fps budget and the median is 10.2 ms; "at >= 60 fps" is read as smooth in practice, not every frame. One device (API 33) plus the API 36 emulator.
+- Carried forward: session-restore entries are in memory only; MediaStore rows are review-only; CI `ci.yml` is malformed.
 
 ## Update — M1-T18 restore and thumbnails (2026-10-11, branch `m1-t18-saf-restore`)
 
