@@ -4,11 +4,17 @@ import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.database.entity.SlotEntity
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.SlotMode
+import com.swipedelete.core.model.SourceRef
+import com.swipedelete.core.storage.PageToken
 import com.swipedelete.core.storage.fake.FakeStorageGateway
+import com.swipedelete.core.storage.scan.ScanPage
+import com.swipedelete.core.storage.scan.SourceScanPort
 import com.swipedelete.feature.deck.domain.DeckBuilder
 import com.swipedelete.feature.deck.domain.FakeScanPort
 import com.swipedelete.feature.deck.domain.FixedClock
 import com.swipedelete.feature.deck.domain.Gesture
+import com.swipedelete.feature.deck.domain.SlotTagSink
 import com.swipedelete.feature.deck.domain.mediaItem
 import com.swipedelete.feature.deck.domain.page
 import com.swipedelete.feature.deck.domain.sourceRef
@@ -25,8 +31,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 
 /**
@@ -62,15 +70,19 @@ class DeckViewModelTest {
     private fun viewModel(
         truncated: Boolean = false,
         mutations: SessionMutations = RecordingMutations(),
+        scanPort: SourceScanPort = FakeScanPort(page(items, truncated = truncated)),
+        sessions: FakeDeckSessionDao = FakeDeckSessionDao(),
+        slots: SlotDao = FakeSlotDao(),
     ) = DeckViewModel(
         builder = DeckBuilder(
-            scanner = { FakeScanPort(page(items, truncated = truncated)) },
+            scanner = { scanPort },
             gateway = gateway,
             clock = FixedClock(0L),
         ),
         gateway = gateway,
-        sessions = FakeDeckSessionDao(),
-        slots = FakeSlotDao(),
+        sessions = sessions,
+        slots = slots,
+        tags = SlotTagSink.NoOp,
         gate = MutationGate { },
         mutations = mutations,
         clock = FixedClock(0L),
@@ -105,10 +117,10 @@ class DeckViewModelTest {
     @Test
     fun `Apply surfaces the items AC-8 aborted, and keeps them staged`() {
         val stale = object : SessionMutations {
-            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId): Int =
-                items.size
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                com.swipedelete.feature.deck.session.allMoved(items)
 
-            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
 
             override suspend fun staleReason(item: MediaItem): String? =
                 if (item.id == ItemId("i1")) "changed on disk" else null
@@ -120,6 +132,96 @@ class DeckViewModelTest {
 
         assertEquals(listOf(ItemId("i1")), vm.state.value.aborted.map { it.item.id })
         assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id }, "an aborted item stays staged")
+    }
+
+    @Test
+    fun `Apply surfaces the items the gateway refused, and keeps them staged`() {
+        val refusing = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                com.swipedelete.feature.deck.session.QuarantineOutcome(
+                    moved = emptySet(),
+                    failures = items.map { com.swipedelete.core.storage.Failure(it.id, "protected_root") },
+                )
+
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
+        }
+        val vm = viewModel(mutations = refusing)
+
+        vm.decide(Gesture.DELETE)
+        vm.applyStaged()
+
+        assertEquals(listOf(ItemId("i1")), vm.state.value.failed.map { it.item.id })
+        assertEquals("protected_root", vm.state.value.failed.single().reason)
+        assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id }, "a refused item stays staged")
+    }
+
+    @Test
+    fun `a source that cannot be scanned shows an error instead of crashing`() {
+        val revoked = object : SourceScanPort {
+            override fun scan(source: SourceRef, page: PageToken?): Flow<ScanPage> =
+                flow { throw SecurityException("grant revoked") }
+        }
+
+        val vm = viewModel(scanPort = revoked)
+
+        assertEquals(false, vm.state.value.loading)
+        assertEquals("grant revoked", vm.state.value.error)
+    }
+
+    @Test
+    fun `an Apply that throws reports the error and keeps the item staged`() {
+        val failing = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                throw IllegalStateException("journal unavailable")
+
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
+        }
+        val vm = viewModel(mutations = failing)
+
+        vm.decide(Gesture.DELETE)
+        vm.applyStaged()
+
+        assertEquals("journal unavailable", vm.state.value.error)
+        assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id })
+    }
+
+    @Test
+    fun `reopening the app resumes the active session at the same card`() = runTest {
+        val dao = FakeDeckSessionDao()
+        viewModel(sessions = dao).decide(Gesture.KEEP)
+
+        val reopened = viewModel(sessions = dao)
+
+        assertEquals(ItemId("i2"), reopened.state.value.current?.id, "the position must survive a restart")
+        assertEquals(1, dao.recent(10).size, "resuming must not start a second session")
+    }
+
+    @Test
+    fun `a finished session is not resumed`() = runTest {
+        val dao = FakeDeckSessionDao()
+        val first = viewModel(sessions = dao)
+        first.decide(Gesture.KEEP)
+        first.finish()
+
+        val reopened = viewModel(sessions = dao)
+
+        assertEquals(ItemId("i1"), reopened.state.value.current?.id)
+        assertEquals(2, dao.recent(10).size)
+    }
+
+    @Test
+    fun `a move refused because the card changed on disk is shown, not ignored`() = runTest {
+        val slotDao = FakeSlotDao()
+        slotDao.upsert(SlotEntity(1, "Memes", "folder", 0L, source.treeUri, SlotMode.MOVE, 0))
+        val changed = object : SessionMutations by RecordingMutations() {
+            override suspend fun staleReason(item: MediaItem): String? = "size changed since the deck was built"
+        }
+        val vm = viewModel(mutations = changed, slots = slotDao)
+
+        vm.onSlotSelected(vm.state.value.slots.single())
+
+        assertEquals("size changed since the deck was built", vm.state.value.error)
+        assertEquals(ItemId("i1"), vm.state.value.current?.id, "the card stays where it was")
     }
 
     private class FakeSlotDao : SlotDao {

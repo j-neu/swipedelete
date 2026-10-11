@@ -6,6 +6,7 @@ import com.swipedelete.core.database.SwipeDeleteDatabase
 import com.swipedelete.core.database.dao.DeckSessionDao
 import com.swipedelete.core.database.dao.JournalDao
 import com.swipedelete.core.database.dao.SlotDao
+import com.swipedelete.core.database.dao.TagDao
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -39,6 +40,11 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideSlotDao(database: SwipeDeleteDatabase): SlotDao = database.slotDao()
+
+    /** Slot tags (SPEC 5.3); a TAG-only slot writes here instead of moving the file. */
+    @Provides
+    @Singleton
+    fun provideTagDao(database: SwipeDeleteDatabase): TagDao = database.tagDao()
 
     /** The durable deck sessions (SPEC 5.5); :feature:deck's SessionController owns them. */
     @Provides

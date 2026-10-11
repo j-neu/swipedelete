@@ -8,6 +8,7 @@ import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.model.DeckStatus
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.model.Slot
 import com.swipedelete.core.model.SlotId
 import com.swipedelete.core.storage.StorageGateway
@@ -16,6 +17,8 @@ import com.swipedelete.feature.deck.domain.DeckQuery
 import com.swipedelete.feature.deck.domain.DeckState
 import com.swipedelete.feature.deck.domain.Gesture
 import com.swipedelete.feature.deck.domain.SlotMoveOutcome
+import com.swipedelete.feature.deck.domain.SlotTagSink
+import com.swipedelete.feature.deck.session.ApplyFailure
 import com.swipedelete.feature.deck.session.MutationGate
 import com.swipedelete.feature.deck.session.SessionController
 import com.swipedelete.feature.deck.session.SessionMutations
@@ -24,6 +27,7 @@ import com.swipedelete.feature.deck.session.StaleAbort
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.InputStream
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,10 +52,14 @@ data class DeckUiState(
     val scanned: Int = 0,
     /** AC-8: items skipped by Apply because they changed on disk, with reasons. */
     val aborted: List<StaleAbort> = emptyList(),
+    /** Items an Apply could not move; still on disk and still staged, with reasons. */
+    val failed: List<ApplyFailure> = emptyList(),
     val finished: Boolean = false,
     val summary: SessionSummary? = null,
     /** True after a drop on a slot whose destination grant is gone. */
     val moveUnavailable: Boolean = false,
+    /** The last failure of a deck action, shown to the user rather than swallowed. */
+    val error: String? = null,
 )
 
 /**
@@ -71,6 +79,7 @@ class DeckViewModel @Inject constructor(
     private val slots: SlotDao,
     private val gate: MutationGate,
     private val mutations: SessionMutations,
+    private val tags: SlotTagSink,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -81,8 +90,8 @@ class DeckViewModel @Inject constructor(
         gate = gate,
         mutations = mutations,
         measuredFreed = { 0L },
-        reclaimable = { 0L },
         gateway = gateway,
+        tags = tags,
     )
 
     /** The full [Slot] behind each dock slot, so a drop can perform the move. */
@@ -92,11 +101,15 @@ class DeckViewModel @Inject constructor(
     val state: StateFlow<DeckUiState> = _state.asStateFlow()
 
     init {
-        viewModelScope.launch { startDefaultDeck() }
+        act { startDefaultDeck() }
     }
 
-    /** Builds a deck for the first available source, or shows the empty deck. */
+    /**
+     * Resumes the session a crash or exit left behind (SPEC 5.5), or else builds a
+     * deck for the first available source, or shows the empty deck.
+     */
     suspend fun startDefaultDeck() {
+        if (resumeActiveSession()) return
         val source = runCatching { gateway.sources() }.getOrDefault(emptyList()).firstOrNull()
         if (source == null) {
             _state.update { it.copy(loading = false, hasSource = false) }
@@ -105,51 +118,99 @@ class DeckViewModel @Inject constructor(
         refresh(controller.start(DeckQuery.Folder(source.id)))
     }
 
-    fun decide(gesture: Gesture) = viewModelScope.launch { refresh(controller.decide(gesture)) }
+    /**
+     * True when an ACTIVE session with work left was restored. One that cannot be
+     * restored, or has nothing left to do, is closed so it is not offered again.
+     */
+    private suspend fun resumeActiveSession(): Boolean {
+        val active = sessions.latestActive() ?: return false
+        val resumed = try {
+            controller.resume(SessionId(active.id))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            null
+        }
+        val hasWorkLeft = resumed != null &&
+            controller.snapshotItems().isNotEmpty() &&
+            (resumed.cursor < resumed.items.size || resumed.staged.isNotEmpty())
+        if (!hasWorkLeft) {
+            sessions.markStatus(active.id, DeckStatus.ABANDONED)
+            return false
+        }
+        refresh(resumed)
+        return true
+    }
 
-    fun onSlotSelected(dock: DockSlot) = viewModelScope.launch {
-        val item = _state.value.current ?: return@launch
-        val slot = slotModels[dock.id] ?: return@launch
-        when (controller.applySlotMove(slot, item)) {
+    fun decide(gesture: Gesture) = act { refresh(controller.decide(gesture)) }
+
+    fun onSlotSelected(dock: DockSlot) = act {
+        val item = _state.value.current ?: return@act
+        val slot = slotModels[dock.id] ?: return@act
+        when (val outcome = controller.applySlotMove(slot, item)) {
             is SlotMoveOutcome.DestinationUnavailable ->
                 _state.update { it.copy(moveUnavailable = true) }
-            else -> Unit
+            // A move that did not happen is said so, with the reason.
+            is SlotMoveOutcome.Stale -> _state.update { it.copy(error = outcome.reason) }
+            is SlotMoveOutcome.Failed -> _state.update { it.copy(error = outcome.reason) }
+            is SlotMoveOutcome.Moved, is SlotMoveOutcome.Renamed, is SlotMoveOutcome.Tagged -> Unit
         }
         refresh()
     }
 
-    fun applyStaged() = viewModelScope.launch {
+    fun applyStaged() = act {
         val result = controller.applyStaged()
-        _state.update { it.copy(aborted = result.aborted) }
+        _state.update { it.copy(aborted = result.aborted, failed = result.failed) }
         refresh()
     }
 
-    fun discardStaging() = viewModelScope.launch { refresh(controller.discardStaging()) }
+    fun discardStaging() = act { refresh(controller.discardStaging()) }
 
-    fun keepStaged() = viewModelScope.launch { refresh(controller.keepStaged()) }
+    fun keepStaged() = act { refresh(controller.keepStaged()) }
 
-    fun revert(index: Int) = viewModelScope.launch { refresh(controller.revert(index)) }
+    fun revert(index: Int) = act { refresh(controller.revert(index)) }
 
-    fun undoLast() = viewModelScope.launch { refresh(controller.undoLast()) }
+    fun undoLast() = act { refresh(controller.undoLast()) }
 
-    fun finish() = viewModelScope.launch {
+    fun finish() = act {
         controller.finish(DeckStatus.COMPLETED)
         refresh()
     }
 
-    fun restoreEverything() = viewModelScope.launch {
+    fun restoreEverything() = act {
         controller.restoreEverything()
         refresh()
     }
+
+    fun dismissError() = _state.update { it.copy(error = null) }
 
     fun dismissMoveUnavailable() = _state.update { it.copy(moveUnavailable = false) }
 
     fun dismissAborts() = _state.update { it.copy(aborted = emptyList()) }
 
+    fun dismissFailures() = _state.update { it.copy(failed = emptyList()) }
+
     /** The stream for [item] through the same gateway the rest of the app uses. */
     fun openStream(item: MediaItem): InputStream = gateway.openStream(item)
 
     fun item(id: ItemId): MediaItem? = _state.value.items.firstOrNull { it.id == id }
+
+    /**
+     * Runs one deck action. A failure (a revoked grant, an unreadable journal) is
+     * reported in [DeckUiState.error] instead of crashing the app, and the deck
+     * is left as it was.
+     */
+    private fun act(block: suspend () -> Unit) = viewModelScope.launch {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            _state.update {
+                it.copy(loading = false, error = failure.message ?: failure::class.simpleName)
+            }
+        }
+    }
 
     private suspend fun refresh(state: DeckState = controller.currentState()) {
         val items = controller.snapshotItems()

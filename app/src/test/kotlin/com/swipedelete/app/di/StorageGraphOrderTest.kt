@@ -26,6 +26,7 @@ import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.routing.SourceRoutingStorageGateway
 import com.swipedelete.core.storage.saf.SafStorageGateway
 import com.swipedelete.core.storage.scan.SourceScanPort
+import com.swipedelete.feature.deck.session.GatewaySessionMutations
 import dagger.Binds
 import dagger.Provides
 import java.io.File
@@ -97,6 +98,25 @@ class StorageGraphOrderTest {
         assertTrue(journal.pending().isEmpty(), "a protected item must leave no PENDING row")
         assertTrue(journal.page(limit = 100, offset = 0).isEmpty(), "the journal must be completely empty")
         assertTrue(fake.fileExists(protected.path!!), "a refused item must not be moved")
+    }
+
+    /**
+     * 1b. The same protected item, decided one card at a time in the deck, is
+     * quarantined through the full stack and journaled like any other (SPEC 6.3).
+     */
+    @Test
+    fun `a deck Apply quarantines a reviewed item from a protected folder and journals it`() = runTest {
+        val protected = item(id = "camera-1", relativePath = "DCIM/Camera/IMG_0001.jpg")
+        val fake = FakeStorageGateway(listOf(protected)).apply { register(protected, CONTENT) }
+        val journal = db.journalDao()
+        val graph = graph(fake, journal, exists = { fake.fileExists(it) })
+
+        val outcome = GatewaySessionMutations(graph.gateway).quarantine(listOf(protected), BatchId("b-deck"))
+
+        assertEquals(setOf(protected.id), outcome.moved, "failures: ${outcome.failures}")
+        assertFalse(fake.fileExists(protected.path!!), "the original must have moved to quarantine")
+        val rows = journal.page(limit = 100, offset = 0)
+        assertEquals(listOf(JournalState.DONE), rows.map { it.state }, "AC-1 still holds for a reviewed item")
     }
 
     /** 2. The write-ahead sequence for an allowed item reads PENDING, OP, DONE. */

@@ -2,9 +2,15 @@ package com.swipedelete.app.di
 
 import com.swipedelete.app.recovery.RecoveryCoordinator
 import com.swipedelete.core.common.Clock
+import com.swipedelete.core.database.dao.TagDao
+import com.swipedelete.core.database.entity.TagEntity
+import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.SlotId
+import com.swipedelete.core.model.Tag
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.routing.GatewayScanPort
 import com.swipedelete.feature.deck.domain.DeckBuilder
+import com.swipedelete.feature.deck.domain.SlotTagSink
 import com.swipedelete.feature.deck.session.GatewaySessionMutations
 import com.swipedelete.feature.deck.session.MutationGate
 import com.swipedelete.feature.deck.session.SessionMutations
@@ -39,7 +45,21 @@ object DeckModule {
     @Provides
     @Singleton
     fun provideSessionMutations(gateway: StorageGateway): SessionMutations =
-        GatewaySessionMutations(gateway)
+        // Whole-library (MediaStore) items are review-only for now. Android only
+        // lets an app remove media it does not own through a system consent
+        // request, which is not built yet, and All Files Access is never used for
+        // media (SPEC 4.2, condition 2). Flip this when the consent step lands.
+        GatewaySessionMutations(gateway, canRemoveLibraryMedia = { false })
+
+    /** A TAG-only slot records its tag in the database; undoing the decision removes it. */
+    @Provides
+    @Singleton
+    fun provideSlotTagSink(tags: TagDao): SlotTagSink = object : SlotTagSink {
+        override suspend fun tag(tag: Tag) =
+            tags.upsert(TagEntity(tag.itemId.value, tag.slotId.value, tag.taggedAt))
+
+        override suspend fun untag(itemId: ItemId, slotId: SlotId) = tags.delete(itemId.value, slotId.value)
+    }
 
     @Provides
     @Singleton

@@ -1,16 +1,23 @@
 package com.swipedelete.feature.deck.session
 
+import com.swipedelete.core.model.BatchId
+import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.Metadata
+import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.feature.deck.domain.mediaItem
 import com.swipedelete.feature.deck.domain.sourceRef
 import java.io.FileNotFoundException
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -60,5 +67,85 @@ class GatewaySessionMutationsTest {
         }
 
         assertNotNull(GatewaySessionMutations(unreadable).staleReason(item(size = 100L)))
+    }
+
+    @Test
+    fun `a partial quarantine reports each refused item with its reason`() = runTest {
+        val a = item(size = 100L)
+        val refusing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult =
+                QuarantineResult.Partial(emptyList(), listOf(Failure(a.id, "protected_root")))
+        }
+
+        val outcome = GatewaySessionMutations(refusing).quarantine(listOf(a), BatchId("b"))
+
+        assertTrue(outcome.moved.isEmpty())
+        assertEquals(listOf(Failure(a.id, "protected_root")), outcome.failures)
+    }
+
+    @Test
+    fun `insufficient space fails every item instead of moving none silently`() = runTest {
+        val a = item(size = 100L)
+        val full = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult =
+                QuarantineResult.InsufficientSpace(neededBytes = 100L, freeBytes = 1L)
+        }
+
+        val outcome = GatewaySessionMutations(full).quarantine(listOf(a), BatchId("b"))
+
+        assertTrue(outcome.moved.isEmpty())
+        assertEquals(listOf(Failure(a.id, "insufficient_space")), outcome.failures)
+    }
+
+    @Test
+    fun `a deck quarantine tells the gateway exactly which items the user reviewed`() = runTest {
+        val a = item(size = 100L)
+        var reviewed: Set<ItemId>? = null
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                reviewed = currentCoroutineContext()[IndividuallyReviewed]?.items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        GatewaySessionMutations(observing).quarantine(listOf(a), BatchId("b"))
+
+        assertEquals(setOf(a.id), reviewed)
+    }
+
+    @Test
+    fun `a whole-library item is not sent to quarantine while the app cannot remove it`() = runTest {
+        val folderItem = item(size = 100L)
+        val libraryItem = folderItem.copy(id = ItemId("mediastore:7"), mediaStoreId = 7L)
+        var sent: List<MediaItem> = emptyList()
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                sent = items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        val outcome = GatewaySessionMutations(observing, canRemoveLibraryMedia = { false })
+            .quarantine(listOf(folderItem, libraryItem), BatchId("b"))
+
+        assertEquals(listOf(folderItem), sent, "copying it first would leave a stray quarantine copy")
+        assertEquals(listOf(Failure(libraryItem.id, "library_delete_unavailable")), outcome.failures)
+    }
+
+    @Test
+    fun `a whole-library item is quarantined normally once the app can remove it`() = runTest {
+        val libraryItem = item(size = 100L).copy(id = ItemId("mediastore:7"), mediaStoreId = 7L)
+        var sent: List<MediaItem> = emptyList()
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                sent = items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        GatewaySessionMutations(observing, canRemoveLibraryMedia = { true })
+            .quarantine(listOf(libraryItem), BatchId("b"))
+
+        assertEquals(listOf(libraryItem), sent)
     }
 }

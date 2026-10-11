@@ -311,6 +311,8 @@ Protected by default; acting inside requires an explicit unlock in Settings with
 - Voice recorders, call recorders, and any tree of media older than 5 years **[OPEN — recommendation: yes, with a distinct warning]**
 - The app's own quarantine directory (never a delete target), and any SAF root itself (we never delete a root the user granted)
 
+**Deck decisions are not a bulk flow (amended 2026-10-11).** The list above exists to stop a flow from acting on files the user never looked at. An item the user decided one at a time in the triage deck — card in front of them, staged, confirmed in the Apply preview, quarantined and restorable — may be quarantined or moved from a protected folder, and regardless of its age, without the Settings unlock. Three things stay protected even for a deck decision: the app's own quarantine directory, a granted SAF root itself, and permanent deletion. Every other flow (cleaner modules, any selection by rule) is still refused until the root is unlocked. In code this is the `IndividuallyReviewed` marker, which only the deck's session layer may install; an architecture test pins that.
+
 Additionally:
 
 - **A file's category is never inferred from its parent folder name alone.** (§12 AC-4) Folder names inform *display*, never *classification for deletion*.
@@ -587,7 +589,7 @@ These are **testable requirements**, not aspirations. Each maps to an automated 
 | AC-4 | A file's category is never derived from its parent folder name alone | Golden-file classifier tests over adversarial directory names |
 | AC-5 | Process death at any point leaves no item in an unknown state; reconciliation resolves every `PENDING` record | Chaos test: force-stop at N random points per batch; assert no limbo |
 | AC-6 | Zero network capability | CI manifest assertion: `INTERNET` absent; no network stack linked |
-| AC-7 | Protected roots cannot be modified by any bulk flow | Per-module test attempting modification without unlock |
+| AC-7 | Protected roots cannot be modified by any bulk flow; only an item the user decided one at a time in the deck is exempt (§6.3), and never from the quarantine directory, a granted root or permanent deletion | Per-module test attempting modification without unlock; `ReviewedExemptionScopeTest` pins who may claim the exemption |
 | AC-8 | Operations act on a frozen snapshot; externally changed items abort with a visible message | Concurrent-modification test |
 | AC-9 | Storage freed is measured, and quarantine bytes are reported as reclaimable, never as freed | Metric unit tests + UI string assertions |
 | AC-10 | **CCleaner regression test:** a directory named `cache`, `Cache`, `.cache` or `temp` containing JPEG/PNG/MP4 files can never appear in any cache/junk/temp/thumbnail/residual category, and can never be deleted by a bulk action | Named regression test, run on every commit |

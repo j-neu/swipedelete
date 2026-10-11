@@ -4,7 +4,11 @@ import com.swipedelete.core.database.dao.DeckSessionDao
 import com.swipedelete.core.database.entity.DeckSessionEntity
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.DeckStatus
+import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.JournalEntry
+import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.OpKind
 import com.swipedelete.core.model.SessionId
 
 /**
@@ -52,16 +56,42 @@ internal class FakeDeckSessionDao : DeckSessionDao {
 internal class RecordingMutations : SessionMutations {
     val quarantined = mutableListOf<List<MediaItem>>()
     val quarantinedBatches = mutableListOf<BatchId>()
-    val restored = mutableListOf<SessionId>()
+    val restored = mutableListOf<List<JournalEntry>>()
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int {
+    /** Which of the requested entries a restore brings back; all of them by default. */
+    var restorable: (JournalEntry) -> Boolean = { true }
+
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
         quarantined += items
         quarantinedBatches += batch
-        return items.size
+        return allMoved(items, batch)
     }
 
-    override suspend fun restoreSession(session: SessionId): Int {
-        restored += session
-        return 1
+    override suspend fun restore(entries: List<JournalEntry>): Set<ItemId> {
+        restored += entries
+        return entries.filter(restorable).mapTo(linkedSetOf()) { it.itemId }
     }
 }
+
+/** The outcome of a quarantine in which every item moved, with its journal entries. */
+internal fun allMoved(items: List<MediaItem>, batch: BatchId = BatchId("batch")): QuarantineOutcome =
+    QuarantineOutcome(
+        moved = items.mapTo(linkedSetOf()) { it.id },
+        failures = emptyList(),
+        entries = items.map { quarantineEntry(it, batch) },
+    )
+
+internal fun quarantineEntry(item: MediaItem, batch: BatchId): JournalEntry = JournalEntry(
+    id = "journal-${item.id.value}",
+    batchId = batch,
+    sessionId = null,
+    itemId = item.id,
+    opKind = OpKind.QUARANTINE,
+    fromUri = item.uri,
+    toUri = "quarantine/${item.id.value}",
+    hash = null,
+    sizeBytes = item.sizeBytes,
+    state = JournalState.DONE,
+    createdAt = 0L,
+    expiresAt = 0L,
+)

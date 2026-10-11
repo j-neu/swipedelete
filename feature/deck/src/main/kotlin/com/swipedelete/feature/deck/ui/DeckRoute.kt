@@ -33,6 +33,12 @@ const val DeckPartialBannerTestTag: String = "deck_partial_banner"
 /** AC-8: the banner that names the items an Apply refused because they changed. */
 const val DeckStaleAbortBannerTestTag: String = "deck_stale_abort_banner"
 
+/** The banner for a deck action that failed outright. */
+const val DeckErrorBannerTestTag: String = "deck_error_banner"
+
+/** The banner that names the items an Apply could not move, and why. */
+const val DeckApplyFailedBannerTestTag: String = "deck_apply_failed_banner"
+
 /**
  * The assembled deck route (finding M1-T15-1). It renders the real deck
  * components — the swipe card, the staging strip, the history strip, the slot
@@ -63,6 +69,9 @@ fun DeckRoute(
         onFinish = viewModel::finish,
         onRestore = viewModel::restoreEverything,
         onDismissAborts = viewModel::dismissAborts,
+        onDismissFailures = viewModel::dismissFailures,
+        onDismissError = viewModel::dismissError,
+        onDismissMoveUnavailable = viewModel::dismissMoveUnavailable,
         modifier = modifier,
         topContent = topContent,
     )
@@ -86,6 +95,9 @@ fun DeckRouteContent(
     onFinish: () -> Unit,
     onRestore: () -> Unit,
     onDismissAborts: () -> Unit = {},
+    onDismissFailures: () -> Unit = {},
+    onDismissError: () -> Unit = {},
+    onDismissMoveUnavailable: () -> Unit = {},
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
 ) {
@@ -101,8 +113,19 @@ fun DeckRouteContent(
             )
         }
 
+        state.error?.let { error ->
+            NoticeBanner(
+                text = stringResource(R.string.deck_error, error),
+                tag = DeckErrorBannerTestTag,
+                onDismiss = onDismissError,
+            )
+        }
+
         if (state.moveUnavailable) {
-            NoticeBanner(text = stringResource(R.string.deck_move_unavailable))
+            NoticeBanner(
+                text = stringResource(R.string.deck_move_unavailable),
+                onDismiss = onDismissMoveUnavailable,
+            )
         }
 
         if (state.aborted.isNotEmpty()) {
@@ -114,6 +137,19 @@ fun DeckRouteContent(
                 ),
                 tag = DeckStaleAbortBannerTestTag,
                 onDismiss = onDismissAborts,
+            )
+        }
+
+        if (state.failed.isNotEmpty()) {
+            val reasons = state.failed.map { it.reason }.distinct().map { applyFailureReason(it) }
+            NoticeBanner(
+                text = stringResource(
+                    R.string.deck_apply_failed,
+                    state.failed.size,
+                    reasons.joinToString("; "),
+                ),
+                tag = DeckApplyFailedBannerTestTag,
+                onDismiss = onDismissFailures,
             )
         }
 
@@ -142,11 +178,33 @@ fun DeckRouteContent(
                 }
                 HistoryStrip(history = state.deck.history, onRevert = onRevert)
                 if (dockRevealed) {
-                    DeckSlotDock(slots = state.slots, onSlotSelected = onSlotSelected)
+                    DeckSlotDock(
+                        slots = state.slots,
+                        onSlotSelected = { slot ->
+                            dockRevealed = false
+                            onSlotSelected(slot)
+                        },
+                    )
+                }
+                // The only route to the summary, the exit prompt and restore-everything.
+                if (state.hasSource) {
+                    TextButton(onClick = onFinish) {
+                        Text(text = stringResource(R.string.deck_finish))
+                    }
                 }
             },
         )
     }
+}
+
+/** A plain-language reason for a gateway failure code; an unknown code is shown as is. */
+@Composable
+private fun applyFailureReason(reason: String): String = when (reason) {
+    "protected_root" -> stringResource(R.string.deck_reason_protected)
+    "insufficient_space" -> stringResource(R.string.deck_reason_space)
+    "original_delete_failed" -> stringResource(R.string.deck_reason_delete_refused)
+    "library_delete_unavailable" -> stringResource(R.string.deck_reason_library_review_only)
+    else -> reason
 }
 
 @Composable
