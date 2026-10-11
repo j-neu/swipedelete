@@ -6,6 +6,10 @@ import com.swipedelete.core.model.SourceId
 import com.swipedelete.core.model.SourceKind
 import com.swipedelete.core.model.SourceRef
 import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.OriginalRestoreOutcome
+import com.swipedelete.core.storage.OriginalRestoreRequest
+import com.swipedelete.core.storage.OriginalRestorer
+import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.core.storage.routing.SourceRoutingStorageGateway
 import kotlin.test.Test
@@ -66,6 +70,35 @@ class SourceRoutingStorageGatewayTest {
         assertEquals(listOf(mediaItem.id), page.items.map { it.id })
         assertFalse(page.truncated, "the MediaStore catalogue has no walk cap to hit")
     }
+
+    @Test
+    fun `a folder-grant restore goes to the SAF backend and a catalogue row never does`() = runTest {
+        val requests = mutableListOf<OriginalRestoreRequest>()
+        val saf = object : StorageGateway by FakeStorageGateway(), OriginalRestorer {
+            override suspend fun restoreOriginal(request: OriginalRestoreRequest): OriginalRestoreOutcome {
+                requests += request
+                return OriginalRestoreOutcome.Restored(request.originalUri)
+            }
+        }
+        val router = SourceRoutingStorageGateway(saf = saf, mediaStore = FakeStorageGateway())
+
+        val folderItem = router.restoreOriginal(request(mediaStoreId = null))
+        val catalogueRow = router.restoreOriginal(request(mediaStoreId = 7L))
+
+        assertEquals(OriginalRestoreOutcome.Restored("content://tree/saf/a.jpg"), folderItem)
+        assertEquals(OriginalRestoreOutcome.Unavailable("no_raw_original_path"), catalogueRow)
+        assertEquals(1, requests.size, "a MediaStore row must not be written through the SAF tree")
+    }
+
+    private fun request(mediaStoreId: Long?) = OriginalRestoreRequest(
+        sourceId = SourceId("saf"),
+        originalUri = "content://tree/saf/a.jpg",
+        relativePath = "a.jpg",
+        mediaStoreId = mediaStoreId,
+        mime = "image/jpeg",
+        sha256 = "unused",
+        open = { ByteArray(0).inputStream() },
+    )
 
     private fun source(id: String, kind: SourceKind, treeUri: String) = SourceRef(
         id = SourceId(id),

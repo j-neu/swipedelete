@@ -141,7 +141,7 @@ class FakeDocumentTree(
         mime: String,
     ): DocumentNode {
         val documentId = "$parentDocumentId/$displayName"
-        val node = DocumentNode(treeUri, documentId, displayName, mime, 0L, 0L, isDirectory = false)
+        val node = DocumentNode(treeUri, documentId, displayName, mime, 0L, 0L, isDirectory = mime == MIME_DIR)
         attach(parentDocumentId, node, ByteArray(0))
         return node
     }

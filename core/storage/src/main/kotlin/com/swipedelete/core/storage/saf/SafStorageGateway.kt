@@ -2,6 +2,7 @@ package com.swipedelete.core.storage.saf
 
 import android.content.Context
 import android.os.StatFs
+import com.swipedelete.core.common.Sha256Hasher
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.Capacity
 import com.swipedelete.core.model.ItemId
@@ -15,6 +16,9 @@ import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.ItemLocator
 import com.swipedelete.core.storage.Metadata
 import com.swipedelete.core.storage.MoveResult
+import com.swipedelete.core.storage.OriginalRestoreOutcome
+import com.swipedelete.core.storage.OriginalRestoreRequest
+import com.swipedelete.core.storage.OriginalRestorer
 import com.swipedelete.core.storage.Page
 import com.swipedelete.core.storage.PageToken
 import com.swipedelete.core.storage.QuarantineResult
@@ -74,7 +78,7 @@ class SafStorageGateway(
     private val access: DocumentTreeAccess = SafDocumentsContractAccess(context),
     private val walker: DocumentTreeWalker = DocumentTreeWalker(access),
     private val quarantineStore: QuarantineStore? = null,
-) : StorageGateway, ItemLocator, SourceScanPort {
+) : StorageGateway, ItemLocator, SourceScanPort, OriginalRestorer {
 
     /**
      * The volume [capacity] reports on. The quarantine root belongs to the
@@ -319,6 +323,83 @@ class SafStorageGateway(
         return resolveNode(source, relativePathFor(source, item))
     }
 
+    /**
+     * AC-3 for a folder-grant item: recreates the document at its original
+     * tree-relative path from the verified quarantine copy. Never overwrites
+     * (AC-17), recreates a missing parent folder, and checks the written bytes
+     * against the recorded hash before reporting success; any failure removes
+     * what it created.
+     */
+    override suspend fun restoreOriginal(request: OriginalRestoreRequest): OriginalRestoreOutcome {
+        val source = persisted.sources().firstOrNull { it.id == request.sourceId }
+            ?: return OriginalRestoreOutcome.Unavailable(RESTORE_SOURCE_NOT_GRANTED)
+        if (source.access != SourceRef.Access.RW) {
+            return OriginalRestoreOutcome.Unavailable(RESTORE_SOURCE_NOT_WRITABLE)
+        }
+        val relative = (request.relativePath?.takeIf { it.isNotBlank() }
+            ?: SafUri.relativePath(source.treeUri, request.originalUri)).trim('/')
+        val name = relative.substringAfterLast('/')
+        if (name.isEmpty()) return OriginalRestoreOutcome.Unavailable(RESTORE_NO_ORIGINAL_NAME)
+        val restoredUri = SafUri.join(source.treeUri, relative)
+
+        val directoryId = try {
+            resolveOrCreateDirectoryId(source, relative.substringBeforeLast('/', missingDelimiterValue = ""))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            return OriginalRestoreOutcome.Unavailable("$RESTORE_FOLDER_FAILED: ${error.message}")
+        }
+        if (access.children(source.treeUri, directoryId).any { it.displayName == name }) {
+            return OriginalRestoreOutcome.Occupied(restoredUri)
+        }
+
+        val created = try {
+            access.createDocument(source.treeUri, directoryId, name, request.mime)
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            return OriginalRestoreOutcome.Unavailable("$RESTORE_CREATE_FAILED: ${error.message}")
+        }
+        try {
+            // A provider may silently pick another name instead of failing on a
+            // collision; that is not the original place, so it is undone.
+            if (access.metadata(created).displayName != name) {
+                access.delete(created)
+                return OriginalRestoreOutcome.Occupied(restoredUri)
+            }
+            request.open().use { input ->
+                access.openOutputStream(created).use { output -> input.copyTo(output) }
+            }
+            val written = Sha256Hasher().sha256(access.openStream(created))
+            if (written != request.sha256) {
+                access.delete(created)
+                return OriginalRestoreOutcome.Unavailable(RESTORE_VERIFY_FAILED)
+            }
+        } catch (cancelled: CancellationException) {
+            runCatching { access.delete(created) }
+            throw cancelled
+        } catch (error: Throwable) {
+            runCatching { access.delete(created) }
+            return OriginalRestoreOutcome.Unavailable("$RESTORE_WRITE_FAILED: ${error.message}")
+        }
+        return OriginalRestoreOutcome.Restored(restoredUri)
+    }
+
+    /** Like [resolveDirectoryId], but creates each missing folder on the way down. */
+    private suspend fun resolveOrCreateDirectoryId(source: SourceRef, relativePath: String): String {
+        var directoryId = SafUri.treeDocumentId(source.treeUri)
+        for (segment in relativePath.trim('/').split('/').filter { it.isNotEmpty() }) {
+            val match = access.children(source.treeUri, directoryId).firstOrNull { it.displayName == segment }
+            directoryId = when {
+                match == null ->
+                    access.createDocument(source.treeUri, directoryId, segment, MIME_DIRECTORY).documentId
+                match.isDirectory -> match.documentId
+                else -> throw IllegalStateException("$segment is a file, not a folder")
+            }
+        }
+        return directoryId
+    }
+
     private suspend fun sourceFor(item: MediaItem): SourceRef? =
         persisted.sources().firstOrNull { it.id == item.sourceId }
 
@@ -393,6 +474,17 @@ class SafStorageGateway(
 
         /** Explicit failure reason when no [QuarantineStore] was supplied. */
         const val QUARANTINE_NOT_CONFIGURED: String = "quarantine_not_configured"
+
+        // Stable reason codes of a refused [restoreOriginal].
+        const val RESTORE_SOURCE_NOT_GRANTED: String = "source_not_granted"
+        const val RESTORE_SOURCE_NOT_WRITABLE: String = "source_not_writable"
+        const val RESTORE_NO_ORIGINAL_NAME: String = "no_original_name"
+        const val RESTORE_FOLDER_FAILED: String = "restore_folder_failed"
+        const val RESTORE_CREATE_FAILED: String = "restore_create_failed"
+        const val RESTORE_WRITE_FAILED: String = "restore_write_failed"
+        const val RESTORE_VERIFY_FAILED: String = "restore_verify_failed"
+
+        private const val MIME_DIRECTORY = "vnd.android.document/directory"
 
         /**
          * First free `name`, `name (1)`, `name (2)`… among [existing]. A dotfile

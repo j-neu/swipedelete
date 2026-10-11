@@ -13,7 +13,6 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.OpKind
-import com.swipedelete.feature.deck.ui.DeckNotRestoredBannerTestTag
 import com.swipedelete.feature.deck.ui.SwipeCardTestTag
 import com.swipedelete.feature.deck.ui.ThumbnailImageTestTag
 import kotlin.test.assertContentEquals
@@ -90,17 +89,9 @@ class DeckEndToEndInstrumentedTest {
         }
     }
 
-    /**
-     * KNOWN GAP, pinned so it cannot regress silently: a quarantined folder-grant
-     * (SAF) item cannot be restored yet. `QuarantineStore.restore` only knows how
-     * to write back to a raw absolute path and refuses a document URI with
-     * `no_raw_original_path`. What this test guarantees today is that the refusal
-     * is visible and loses nothing: the user is told, and the verified quarantine
-     * copy is still there. When SAF restore lands, this becomes "the file is back,
-     * byte-identical".
-     */
+    /** AC-3 through the UI: what the deck quarantined comes back, byte-identical. */
     @Test
-    fun a_restore_that_cannot_put_the_file_back_says_so_and_keeps_the_quarantine_copy() {
+    fun restore_everything_from_the_summary_puts_the_file_back_byte_identical() {
         val deleted = harness.files[0]
         val originalBytes = deleted.readBytes()
         rule.waitUntil(TIMEOUT) { state.current != null }
@@ -115,12 +106,14 @@ class DeckEndToEndInstrumentedTest {
         rule.onNodeWithText("reclaimable", substring = true).assertExists()
         rule.onNodeWithText("Restore everything from this session").performClick()
 
-        rule.waitUntil(TIMEOUT) { deleted.exists() || state.notRestored > 0 || state.error != null }
-        assertFalse(deleted.exists(), "SAF restore now works: replace this test with the byte-identical restore check")
-        assertEquals(1, state.notRestored, "error=${state.error}")
-        rule.onNodeWithTag(DeckNotRestoredBannerTestTag).assertExists()
-        val copy = harness.quarantineRoot.walkTopDown().single { it.isFile && it.name == deleted.name }
-        assertContentEquals(originalBytes, copy.readBytes(), "a refused restore must not cost the quarantine copy")
+        // The restore is finished when the quarantine copy is gone; the file
+        // appearing is too early, since it is created empty and then written.
+        fun copyGone() = harness.quarantineRoot.walkTopDown().none { it.isFile && it.name == deleted.name }
+        rule.waitUntil(TIMEOUT) { copyGone() || state.notRestored > 0 || state.error != null }
+        assertTrue(deleted.exists(), "notRestored=${state.notRestored} error=${state.error}")
+        assertContentEquals(originalBytes, deleted.readBytes())
+        assertEquals(0, state.notRestored)
+        assertTrue(copyGone(), "a restored item leaves quarantine")
     }
 
     private companion object {
