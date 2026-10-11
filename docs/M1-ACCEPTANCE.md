@@ -6,6 +6,20 @@ The loop is assembled and every automated suite is green, but the re-review foun
 
 This record supersedes the 2026-10-03 version, which predated the whole-branch review and described library modules as if they were the shipped loop. It keeps `docs/M0-ACCEPTANCE.md`'s honesty rule: an item is marked verified only where a command was run and its output seen. Findings reached by reading code are marked **read, not run**.
 
+## Update — M1-T18 restore and thumbnails (2026-10-11, branch `m1-t18-saf-restore`)
+
+**Status: NOT ACCEPTED.** One blocker is left: the deck's frame time. T17 was merged (`46307cc`).
+
+- **SAF restore — fixed (`d1af66f`).** A quarantined folder-grant item is now restored to its original tree path through a new `OriginalRestorer` capability on the concrete gateway: never overwriting, recreating a missing folder, hash-verified, and with the quarantine copy removed only after a verified restore. Host tests cover restore, folder recreation, occupancy and a revoked grant. The end-to-end device test restores through the summary screen and checks the bytes: 3/3 on the API 36 emulator and on the Android 13 phone. A MediaStore row still cannot be restored this way (it also cannot be quarantined; see T16 I3).
+- **Blank deck cards — found and fixed (`5ed2a5a`).** A folder-grant item's `uri` is the gateway's `treeUri/relativePath` form, which `ContentResolver` cannot open, so every such card and staging tile was blank: the user was deciding without seeing the image. Thumbnails now read through the gateway's stream, off the main thread. A device test asserts a decoded image is on the card.
+- **T16's SAF protected-root matching corrected (`e7d0eab`).** It decoded only the last URI segment and so missed that same real URI shape; the whole URI is now decoded.
+
+**The T17 frame-time figures are no longer representative**: they were taken while cards were blank, so no image was being decoded. The re-measurement on the phone was interrupted when the phone dropped off USB mid-run and has not been repeated. The test app `com.swipedelete.feature.deck.test` may still be installed on the phone from that interrupted run.
+
+Run on the branch head: `testDebugUnitTest` **414 tests, 0 failures**; API 36 emulator `:core:storage` 10/10, `:feature:deck` 7 pass + 1 skipped (opt-in frame-rate run).
+
+Needed for acceptance now: re-measure the 500-item frame time with real thumbnails, find the per-frame cost, fix it, and measure again on a release-like build.
+
 ## Update — M1-T17 device acceptance (2026-10-11, branch `m1-t17-device-acceptance`)
 
 **Status: NOT ACCEPTED.** The two missing acceptance pieces now exist and were run. One passes; the exit criterion fails; and the end-to-end run found a restore defect. The T16 fix wave was reviewed by the product owner and merged (`a5f2afc`).

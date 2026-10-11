@@ -158,12 +158,15 @@ class ProtectedRootsStorageGateway(
         listOfNotNull(path, relativePath).ifEmpty { listOf(uri) }
             .flatMap { listOfNotNull(it, documentPath(it)) }
 
-    /** `content://…/document/primary%3ADCIM%2FCamera%2Fa.jpg` → `DCIM/Camera/a.jpg`. */
+    /**
+     * A content URI with its encoded document ids opened up into path segments:
+     * `…/tree/primary%3ADCIM%2FAlbum/trip/a.jpg` → `…/tree/primary/DCIM/Album/trip/a.jpg`.
+     * Covers both the gateway's `treeUri/relativePath` form and a real document URI.
+     */
     private fun documentPath(value: String): String? {
         if (!value.startsWith("content://")) return null
-        val decoded = runCatching { URLDecoder.decode(value.substringAfterLast('/'), "UTF-8") }
-            .getOrNull() ?: return null
-        return decoded.substringAfter(':')
+        val decoded = runCatching { URLDecoder.decode(value, "UTF-8") }.getOrNull() ?: return null
+        return decoded.removePrefix("content://").replace(':', '/')
     }
 
     companion object {

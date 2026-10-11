@@ -1,6 +1,5 @@
 package com.swipedelete.feature.deck.ui
 
-import android.content.ContentResolver
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
 import android.net.Uri
@@ -24,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -36,6 +36,7 @@ import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
@@ -49,10 +50,17 @@ import com.swipedelete.core.model.MediaItem
 import com.swipedelete.feature.deck.R
 import com.swipedelete.feature.deck.domain.Gesture
 import kotlin.math.abs
+import java.io.InputStream
+import java.nio.ByteBuffer
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** The test tag the swipe surface is addressed by in UI tests. */
 const val SwipeCardTestTag: String = "swipe_card"
+
+/** On a thumbnail that actually decoded; the blank fallback does not carry it. */
+const val ThumbnailImageTestTag: String = "thumbnail_image"
 
 /** The four drag directions a card can commit to. */
 enum class SwipeDirection { LEFT, RIGHT, UP, DOWN }
@@ -276,15 +284,27 @@ private fun SwipeDirectionOverlay(
 @Composable
 internal fun Thumbnail(item: MediaItem, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, item.uri) {
-        value = runCatching { decodeThumbnail(context.contentResolver, item.uri) }.getOrNull()
+    val gatewayStream = LocalItemStreamOpener.current
+    val bitmap by produceState<ImageBitmap?>(initialValue = null, item.id, item.uri, gatewayStream) {
+        // Off the main thread: a decode during a swipe must not cost frames.
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                if (!item.mime.startsWith("image/")) return@runCatching null
+                val bytes = if (gatewayStream != null) {
+                    gatewayStream(item).use { it.readBytes() }
+                } else {
+                    context.contentResolver.openInputStream(Uri.parse(item.uri))?.use { it.readBytes() }
+                }
+                bytes?.let(::decodeThumbnail)
+            }.getOrNull()
+        }
     }
     val decoded = bitmap
     if (decoded != null) {
         Image(
             bitmap = decoded,
             contentDescription = null,
-            modifier = modifier,
+            modifier = modifier.testTag(ThumbnailImageTestTag),
             contentScale = ContentScale.Crop,
         )
     } else {
@@ -292,11 +312,18 @@ internal fun Thumbnail(item: MediaItem, modifier: Modifier = Modifier) {
     }
 }
 
-/** Decodes a bounded thumbnail; returns null when the item cannot be decoded. */
-private fun decodeThumbnail(resolver: ContentResolver, uri: String): ImageBitmap? {
-    val parsed = Uri.parse(uri)
+/**
+ * How a thumbnail reads an item's bytes. The deck route provides the storage
+ * gateway's stream, because a folder-grant item's uri is the gateway's own
+ * `treeUri/relativePath` form, which `ContentResolver` cannot open. Null falls
+ * back to opening [MediaItem.uri] directly.
+ */
+val LocalItemStreamOpener = staticCompositionLocalOf<((MediaItem) -> InputStream)?> { null }
+
+/** Decodes a bounded thumbnail; returns null when the bytes cannot be decoded. */
+private fun decodeThumbnail(bytes: ByteArray): ImageBitmap? {
     val bitmap = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-        val source = ImageDecoder.createSource(resolver, parsed)
+        val source = ImageDecoder.createSource(ByteBuffer.wrap(bytes))
         ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
             val maxDimension = 512
             val width = info.size.width
@@ -312,7 +339,7 @@ private fun decodeThumbnail(resolver: ContentResolver, uri: String): ImageBitmap
             decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
         }
     } else {
-        resolver.openInputStream(parsed)?.use { BitmapFactory.decodeStream(it) }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
     return bitmap?.asImageBitmap()
 }

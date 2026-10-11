@@ -9,8 +9,12 @@ import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.OpKind
 import com.swipedelete.core.model.SessionId
+import com.swipedelete.core.model.SourceId
 import com.swipedelete.core.storage.DeleteResult
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.OriginalRestoreOutcome
+import com.swipedelete.core.storage.OriginalRestoreRequest
+import com.swipedelete.core.storage.OriginalRestorer
 import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
@@ -205,16 +209,13 @@ class QuarantineStore(
             return@withContext RestoreResult.HashMismatch(sidecar.sha256, actual)
         }
 
-        // A raw, absolute filesystem path is required. A content-URI-only
-        // original (MediaStore/SAF) has no `originalPath`; falling back to the
-        // URI would write to a bogus relative location and then delete the last
-        // remaining copy. Refuse instead — URI-based restore is M1-T01's job.
+        // A raw, absolute path is restored here. An original that is only
+        // reachable as a content URI (a folder grant) is handed to the gateway
+        // that owns its tree; writing such a URI as a file path would create a
+        // bogus file and then drop the last real copy.
         val targetPath = sidecar.originalPath
         if (targetPath.isNullOrBlank() || !File(targetPath).isAbsolute) {
-            return@withContext RestoreResult.Conflict(
-                targetPath ?: sidecar.originalUri,
-                NO_ORIGINAL_PATH,
-            )
+            return@withContext restoreThroughGateway(sidecar, quarantined, sidecarFile)
         }
         val target = File(targetPath)
         if (target.exists()) {
@@ -250,6 +251,39 @@ class QuarantineStore(
         quarantined.delete()
         sidecarFile.delete()
         RestoreResult.Restored(targetPath)
+    }
+
+    /**
+     * Restores an original that has no raw path. The quarantine copy and its
+     * sidecar are removed only after the gateway reports a verified restore; a
+     * gateway that cannot do it leaves the documented [NO_ORIGINAL_PATH] refusal.
+     */
+    private suspend fun restoreThroughGateway(
+        sidecar: Sidecar,
+        quarantined: File,
+        sidecarFile: File,
+    ): RestoreResult {
+        val original = sidecar.originalPath ?: sidecar.originalUri
+        val restorer = gateway as? OriginalRestorer
+            ?: return RestoreResult.Conflict(original, NO_ORIGINAL_PATH)
+        val request = OriginalRestoreRequest(
+            sourceId = SourceId(sidecar.sourceId),
+            originalUri = sidecar.originalUri,
+            relativePath = sidecar.relativePath,
+            mediaStoreId = sidecar.mediaStoreId,
+            mime = sidecar.mime,
+            sha256 = sidecar.sha256,
+            open = { quarantined.inputStream() },
+        )
+        return when (val outcome = restorer.restoreOriginal(request)) {
+            is OriginalRestoreOutcome.Restored -> {
+                quarantined.delete()
+                sidecarFile.delete()
+                RestoreResult.Restored(outcome.uri)
+            }
+            is OriginalRestoreOutcome.Occupied -> RestoreResult.Conflict(original, outcome.uri)
+            is OriginalRestoreOutcome.Unavailable -> RestoreResult.Conflict(original, outcome.reason)
+        }
     }
 
     /** The current quarantined set, read from the sidecars under [root]. */

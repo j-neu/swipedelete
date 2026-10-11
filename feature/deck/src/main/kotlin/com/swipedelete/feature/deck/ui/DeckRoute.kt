@@ -11,6 +11,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -59,26 +60,29 @@ fun DeckRoute(
     topContent: @Composable () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    DeckRouteContent(
-        state = state,
-        onDecision = viewModel::decide,
-        onOpen = onOpenItem,
-        onSlotSelected = viewModel::onSlotSelected,
-        onApply = viewModel::applyStaged,
-        onDiscard = viewModel::discardStaging,
-        onKeep = viewModel::keepStaged,
-        onUndoLast = viewModel::undoLast,
-        onRevert = viewModel::revert,
-        onFinish = viewModel::finish,
-        onRestore = viewModel::restoreEverything,
-        onDismissAborts = viewModel::dismissAborts,
-        onDismissFailures = viewModel::dismissFailures,
-        onDismissError = viewModel::dismissError,
-        onDismissNotRestored = viewModel::dismissNotRestored,
-        onDismissMoveUnavailable = viewModel::dismissMoveUnavailable,
-        modifier = modifier,
-        topContent = topContent,
-    )
+    // Thumbnails read through the same gateway the viewer uses.
+    CompositionLocalProvider(LocalItemStreamOpener provides viewModel::openStream) {
+        DeckRouteContent(
+            state = state,
+            onDecision = viewModel::decide,
+            onOpen = onOpenItem,
+            onSlotSelected = viewModel::onSlotSelected,
+            onApply = viewModel::applyStaged,
+            onDiscard = viewModel::discardStaging,
+            onKeep = viewModel::keepStaged,
+            onUndoLast = viewModel::undoLast,
+            onRevert = viewModel::revert,
+            onFinish = viewModel::finish,
+            onRestore = viewModel::restoreEverything,
+            onDismissAborts = viewModel::dismissAborts,
+            onDismissFailures = viewModel::dismissFailures,
+            onDismissError = viewModel::dismissError,
+            onDismissNotRestored = viewModel::dismissNotRestored,
+            onDismissMoveUnavailable = viewModel::dismissMoveUnavailable,
+            modifier = modifier,
+            topContent = topContent,
+        )
+    }
 }
 
 /**

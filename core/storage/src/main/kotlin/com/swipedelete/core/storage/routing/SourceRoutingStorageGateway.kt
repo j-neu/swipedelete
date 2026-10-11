@@ -12,6 +12,9 @@ import com.swipedelete.core.storage.Destination
 import com.swipedelete.core.storage.ItemLocator
 import com.swipedelete.core.storage.Metadata
 import com.swipedelete.core.storage.MoveResult
+import com.swipedelete.core.storage.OriginalRestoreOutcome
+import com.swipedelete.core.storage.OriginalRestoreRequest
+import com.swipedelete.core.storage.OriginalRestorer
 import com.swipedelete.core.storage.Page
 import com.swipedelete.core.storage.PageToken
 import com.swipedelete.core.storage.QuarantineResult
@@ -50,7 +53,7 @@ import java.io.InputStream
 class SourceRoutingStorageGateway(
     private val saf: StorageGateway,
     private val mediaStore: StorageGateway,
-) : StorageGateway, SourceScanPort, ItemLocator {
+) : StorageGateway, SourceScanPort, ItemLocator, OriginalRestorer {
 
     private val safLocator: ItemLocator? get() = saf as? ItemLocator
     private val mediaLocator: ItemLocator? get() = mediaStore as? ItemLocator
@@ -111,8 +114,24 @@ class SourceRoutingStorageGateway(
         return mediaLocator?.let { runCatching { it.exists(uri) }.getOrDefault(false) } ?: false
     }
 
+    // --- OriginalRestorer ---
+
+    /**
+     * Routed like every item operation: a catalogue row to the MediaStore child,
+     * anything else to the SAF child. A child that cannot restore reports the
+     * same refusal the quarantine store gives when no gateway can.
+     */
+    override suspend fun restoreOriginal(request: OriginalRestoreRequest): OriginalRestoreOutcome {
+        val child = if (request.mediaStoreId != null) mediaStore else saf
+        return (child as? OriginalRestorer)?.restoreOriginal(request)
+            ?: OriginalRestoreOutcome.Unavailable(NO_RESTORER)
+    }
+
     private companion object {
         /** `MediaItem.id` for a catalogue row, see `MediaStoreCursorMapper`. */
         const val MEDIASTORE_ITEM_PREFIX = "mediastore:"
+
+        /** Same code as `QuarantineStore.NO_ORIGINAL_PATH`. */
+        const val NO_RESTORER = "no_raw_original_path"
     }
 }
