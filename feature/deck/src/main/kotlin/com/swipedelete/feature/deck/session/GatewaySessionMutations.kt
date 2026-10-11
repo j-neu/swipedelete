@@ -25,9 +25,25 @@ import kotlinx.coroutines.withContext
  */
 class GatewaySessionMutations(
     private val gateway: StorageGateway,
+    /**
+     * False while the app has no way to remove a whole-library (MediaStore) item
+     * it does not own: Android refuses that delete without a system consent step
+     * the app does not have yet. Such an item is reported, not copied to
+     * quarantine and left behind as a duplicate.
+     */
+    private val canRemoveLibraryMedia: () -> Boolean = { true },
 ) : SessionMutations {
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome =
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
+        val blocked = if (canRemoveLibraryMedia()) emptyList() else items.filter { it.mediaStoreId != null }
+        val unavailable = blocked.map { Failure(it.id, LIBRARY_DELETE_UNAVAILABLE) }
+        val sendable = items - blocked.toSet()
+        if (sendable.isEmpty()) return QuarantineOutcome(emptySet(), unavailable)
+        val outcome = quarantineAllowed(sendable, batch)
+        return outcome.copy(failures = outcome.failures + unavailable)
+    }
+
+    private suspend fun quarantineAllowed(items: List<MediaItem>, batch: BatchId): QuarantineOutcome =
         when (val result = quarantineReviewed(items, batch)) {
             is QuarantineResult.Quarantined -> QuarantineOutcome(result.entries.movedIds(), emptyList(), result.entries)
             is QuarantineResult.Partial -> QuarantineOutcome(result.entries.movedIds(), result.failures, result.entries)
@@ -60,5 +76,6 @@ class GatewaySessionMutations(
 
     private companion object {
         const val INSUFFICIENT_SPACE = "insufficient_space"
+        const val LIBRARY_DELETE_UNAVAILABLE = "library_delete_unavailable"
     }
 }

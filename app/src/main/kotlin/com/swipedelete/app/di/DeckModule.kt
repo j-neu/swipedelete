@@ -45,7 +45,11 @@ object DeckModule {
     @Provides
     @Singleton
     fun provideSessionMutations(gateway: StorageGateway): SessionMutations =
-        GatewaySessionMutations(gateway)
+        // Whole-library (MediaStore) items are review-only for now. Android only
+        // lets an app remove media it does not own through a system consent
+        // request, which is not built yet, and All Files Access is never used for
+        // media (SPEC 4.2, condition 2). Flip this when the consent step lands.
+        GatewaySessionMutations(gateway, canRemoveLibraryMedia = { false })
 
     /** A TAG-only slot records its tag in the database; undoing the decision removes it. */
     @Provides

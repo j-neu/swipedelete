@@ -203,6 +203,7 @@ private fun applyFailureReason(reason: String): String = when (reason) {
     "protected_root" -> stringResource(R.string.deck_reason_protected)
     "insufficient_space" -> stringResource(R.string.deck_reason_space)
     "original_delete_failed" -> stringResource(R.string.deck_reason_delete_refused)
+    "library_delete_unavailable" -> stringResource(R.string.deck_reason_library_review_only)
     else -> reason
 }
 

@@ -112,4 +112,40 @@ class GatewaySessionMutationsTest {
 
         assertEquals(setOf(a.id), reviewed)
     }
+
+    @Test
+    fun `a whole-library item is not sent to quarantine while the app cannot remove it`() = runTest {
+        val folderItem = item(size = 100L)
+        val libraryItem = folderItem.copy(id = ItemId("mediastore:7"), mediaStoreId = 7L)
+        var sent: List<MediaItem> = emptyList()
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                sent = items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        val outcome = GatewaySessionMutations(observing, canRemoveLibraryMedia = { false })
+            .quarantine(listOf(folderItem, libraryItem), BatchId("b"))
+
+        assertEquals(listOf(folderItem), sent, "copying it first would leave a stray quarantine copy")
+        assertEquals(listOf(Failure(libraryItem.id, "library_delete_unavailable")), outcome.failures)
+    }
+
+    @Test
+    fun `a whole-library item is quarantined normally once the app can remove it`() = runTest {
+        val libraryItem = item(size = 100L).copy(id = ItemId("mediastore:7"), mediaStoreId = 7L)
+        var sent: List<MediaItem> = emptyList()
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                sent = items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        GatewaySessionMutations(observing, canRemoveLibraryMedia = { true })
+            .quarantine(listOf(libraryItem), BatchId("b"))
+
+        assertEquals(listOf(libraryItem), sent)
+    }
 }

@@ -24,6 +24,7 @@
     <string name="deck_apply_failed">%1$d item(s) were not deleted and are still staged: %2$s</string>
     <string name="deck_reason_protected">in a protected folder</string>
     <string name="deck_reason_space">not enough free space to keep a recoverable copy</string>
+    <string name="deck_reason_library_review_only">whole-library items can be reviewed, kept and deferred here, but not deleted yet</string>
     <string name="deck_reason_delete_refused">Android did not let this app remove the original</string>
     <string name="deck_error">That did not work: %1$s</string>
     <string name="deck_finish">Finish session</string>
