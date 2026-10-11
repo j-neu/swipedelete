@@ -105,8 +105,8 @@ class DeckViewModelTest {
     @Test
     fun `Apply surfaces the items AC-8 aborted, and keeps them staged`() {
         val stale = object : SessionMutations {
-            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId): Int =
-                items.size
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                com.swipedelete.feature.deck.session.allMoved(items)
 
             override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
 
@@ -120,6 +120,27 @@ class DeckViewModelTest {
 
         assertEquals(listOf(ItemId("i1")), vm.state.value.aborted.map { it.item.id })
         assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id }, "an aborted item stays staged")
+    }
+
+    @Test
+    fun `Apply surfaces the items the gateway refused, and keeps them staged`() {
+        val refusing = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                com.swipedelete.feature.deck.session.QuarantineOutcome(
+                    moved = emptySet(),
+                    failures = items.map { com.swipedelete.core.storage.Failure(it.id, "protected_root") },
+                )
+
+            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+        }
+        val vm = viewModel(mutations = refusing)
+
+        vm.decide(Gesture.DELETE)
+        vm.applyStaged()
+
+        assertEquals(listOf(ItemId("i1")), vm.state.value.failed.map { it.item.id })
+        assertEquals("protected_root", vm.state.value.failed.single().reason)
+        assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id }, "a refused item stays staged")
     }
 
     private class FakeSlotDao : SlotDao {

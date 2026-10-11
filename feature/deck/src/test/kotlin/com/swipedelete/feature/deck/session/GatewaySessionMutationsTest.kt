@@ -1,13 +1,17 @@
 package com.swipedelete.feature.deck.session
 
+import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.Metadata
+import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.feature.deck.domain.mediaItem
 import com.swipedelete.feature.deck.domain.sourceRef
 import java.io.FileNotFoundException
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -60,5 +64,33 @@ class GatewaySessionMutationsTest {
         }
 
         assertNotNull(GatewaySessionMutations(unreadable).staleReason(item(size = 100L)))
+    }
+
+    @Test
+    fun `a partial quarantine reports each refused item with its reason`() = runTest {
+        val a = item(size = 100L)
+        val refusing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult =
+                QuarantineResult.Partial(emptyList(), listOf(Failure(a.id, "protected_root")))
+        }
+
+        val outcome = GatewaySessionMutations(refusing).quarantine(listOf(a), BatchId("b"))
+
+        assertTrue(outcome.moved.isEmpty())
+        assertEquals(listOf(Failure(a.id, "protected_root")), outcome.failures)
+    }
+
+    @Test
+    fun `insufficient space fails every item instead of moving none silently`() = runTest {
+        val a = item(size = 100L)
+        val full = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult =
+                QuarantineResult.InsufficientSpace(neededBytes = 100L, freeBytes = 1L)
+        }
+
+        val outcome = GatewaySessionMutations(full).quarantine(listOf(a), BatchId("b"))
+
+        assertTrue(outcome.moved.isEmpty())
+        assertEquals(listOf(Failure(a.id, "insufficient_space")), outcome.failures)
     }
 }

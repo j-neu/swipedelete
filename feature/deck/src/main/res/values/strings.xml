@@ -20,6 +20,11 @@
     <string name="deck_partial_banner">Partial deck — the scan stopped early after %1$d items seen</string>
     <!-- AC-8: an item that changed on disk is aborted with a visible reason. -->
     <string name="deck_stale_abort">%1$d item(s) changed on disk and were not deleted: %2$s</string>
+    <!-- An item the storage layer did not move is never shown as deleted. -->
+    <string name="deck_apply_failed">%1$d item(s) were not deleted and are still staged: %2$s</string>
+    <string name="deck_reason_protected">in a protected folder</string>
+    <string name="deck_reason_space">not enough free space to keep a recoverable copy</string>
+    <string name="deck_reason_delete_refused">Android did not let this app remove the original</string>
     <string name="deck_move_unavailable">That slot destination is no longer available</string>
     <string name="deck_empty">No sources to review yet</string>
     <string name="deck_dismiss">Dismiss</string>

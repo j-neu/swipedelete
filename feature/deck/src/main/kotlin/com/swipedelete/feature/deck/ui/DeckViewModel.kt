@@ -16,6 +16,7 @@ import com.swipedelete.feature.deck.domain.DeckQuery
 import com.swipedelete.feature.deck.domain.DeckState
 import com.swipedelete.feature.deck.domain.Gesture
 import com.swipedelete.feature.deck.domain.SlotMoveOutcome
+import com.swipedelete.feature.deck.session.ApplyFailure
 import com.swipedelete.feature.deck.session.MutationGate
 import com.swipedelete.feature.deck.session.SessionController
 import com.swipedelete.feature.deck.session.SessionMutations
@@ -48,6 +49,8 @@ data class DeckUiState(
     val scanned: Int = 0,
     /** AC-8: items skipped by Apply because they changed on disk, with reasons. */
     val aborted: List<StaleAbort> = emptyList(),
+    /** Items an Apply could not move; still on disk and still staged, with reasons. */
+    val failed: List<ApplyFailure> = emptyList(),
     val finished: Boolean = false,
     val summary: SessionSummary? = null,
     /** True after a drop on a slot whose destination grant is gone. */
@@ -120,7 +123,7 @@ class DeckViewModel @Inject constructor(
 
     fun applyStaged() = viewModelScope.launch {
         val result = controller.applyStaged()
-        _state.update { it.copy(aborted = result.aborted) }
+        _state.update { it.copy(aborted = result.aborted, failed = result.failed) }
         refresh()
     }
 
@@ -145,6 +148,8 @@ class DeckViewModel @Inject constructor(
     fun dismissMoveUnavailable() = _state.update { it.copy(moveUnavailable = false) }
 
     fun dismissAborts() = _state.update { it.copy(aborted = emptyList()) }
+
+    fun dismissFailures() = _state.update { it.copy(failed = emptyList()) }
 
     /** The stream for [item] through the same gateway the rest of the app uses. */
     fun openStream(item: MediaItem): InputStream = gateway.openStream(item)

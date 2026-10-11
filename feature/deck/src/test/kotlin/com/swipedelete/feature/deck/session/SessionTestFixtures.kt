@@ -54,10 +54,10 @@ internal class RecordingMutations : SessionMutations {
     val quarantinedBatches = mutableListOf<BatchId>()
     val restored = mutableListOf<SessionId>()
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int {
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
         quarantined += items
         quarantinedBatches += batch
-        return items.size
+        return allMoved(items)
     }
 
     override suspend fun restoreSession(session: SessionId): Int {
@@ -65,3 +65,7 @@ internal class RecordingMutations : SessionMutations {
         return 1
     }
 }
+
+/** The outcome of a quarantine in which every item moved. */
+internal fun allMoved(items: List<MediaItem>): QuarantineOutcome =
+    QuarantineOutcome(moved = items.mapTo(linkedSetOf()) { it.id }, failures = emptyList())

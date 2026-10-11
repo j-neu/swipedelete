@@ -33,6 +33,9 @@ const val DeckPartialBannerTestTag: String = "deck_partial_banner"
 /** AC-8: the banner that names the items an Apply refused because they changed. */
 const val DeckStaleAbortBannerTestTag: String = "deck_stale_abort_banner"
 
+/** The banner that names the items an Apply could not move, and why. */
+const val DeckApplyFailedBannerTestTag: String = "deck_apply_failed_banner"
+
 /**
  * The assembled deck route (finding M1-T15-1). It renders the real deck
  * components — the swipe card, the staging strip, the history strip, the slot
@@ -63,6 +66,7 @@ fun DeckRoute(
         onFinish = viewModel::finish,
         onRestore = viewModel::restoreEverything,
         onDismissAborts = viewModel::dismissAborts,
+        onDismissFailures = viewModel::dismissFailures,
         modifier = modifier,
         topContent = topContent,
     )
@@ -86,6 +90,7 @@ fun DeckRouteContent(
     onFinish: () -> Unit,
     onRestore: () -> Unit,
     onDismissAborts: () -> Unit = {},
+    onDismissFailures: () -> Unit = {},
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
 ) {
@@ -114,6 +119,19 @@ fun DeckRouteContent(
                 ),
                 tag = DeckStaleAbortBannerTestTag,
                 onDismiss = onDismissAborts,
+            )
+        }
+
+        if (state.failed.isNotEmpty()) {
+            val reasons = state.failed.map { it.reason }.distinct().map { applyFailureReason(it) }
+            NoticeBanner(
+                text = stringResource(
+                    R.string.deck_apply_failed,
+                    state.failed.size,
+                    reasons.joinToString("; "),
+                ),
+                tag = DeckApplyFailedBannerTestTag,
+                onDismiss = onDismissFailures,
             )
         }
 
@@ -147,6 +165,15 @@ fun DeckRouteContent(
             },
         )
     }
+}
+
+/** A plain-language reason for a gateway failure code; an unknown code is shown as is. */
+@Composable
+private fun applyFailureReason(reason: String): String = when (reason) {
+    "protected_root" -> stringResource(R.string.deck_reason_protected)
+    "insufficient_space" -> stringResource(R.string.deck_reason_space)
+    "original_delete_failed" -> stringResource(R.string.deck_reason_delete_refused)
+    else -> reason
 }
 
 @Composable

@@ -4,6 +4,7 @@ import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SessionId
+import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import com.swipedelete.feature.deck.domain.DeckBuilder
 import com.swipedelete.feature.deck.domain.DeckQuery
@@ -74,9 +75,9 @@ class SessionApplyTest {
     fun `Apply awaits readiness then quarantines the whole staged set once`() = runTest {
         val order = mutableListOf<String>()
         val ordering = object : SessionMutations {
-            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
                 order += "quarantine"
-                return items.size
+                return allMoved(items)
             }
 
             override suspend fun restoreSession(session: SessionId): Int = 0
@@ -101,7 +102,7 @@ class SessionApplyTest {
     @Test
     fun `Apply aborts a staged item that changed on disk and keeps it staged`() = runTest {
         val changed = object : SessionMutations {
-            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int = items.size
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome = allMoved(items)
 
             override suspend fun restoreSession(session: SessionId): Int = 0
 
@@ -124,6 +125,55 @@ class SessionApplyTest {
             "AC-8: an aborted item stays staged so it is never silently destroyed",
         )
         assertEquals(listOf(ItemId("i2")), controller.currentState().decided)
+    }
+
+
+    @Test
+    fun `Apply keeps an item the gateway refused staged and reports why`() = runTest {
+        val refusing = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId) = QuarantineOutcome(
+                moved = setOf(ItemId("i2")),
+                failures = listOf(Failure(ItemId("i1"), "protected_root")),
+            )
+
+            override suspend fun restoreSession(session: SessionId): Int = 0
+        }
+        val controller = newController(mutations = refusing)
+        controller.start(DeckQuery.Folder(source.id))
+        controller.decide(Gesture.DELETE)
+        controller.decide(Gesture.DELETE)
+
+        val result = controller.applyStaged()
+
+        assertEquals(1, result.quarantined, "only what the gateway moved counts as quarantined")
+        assertEquals(listOf(ItemId("i1")), result.failed.map { it.item.id })
+        assertEquals("protected_root", result.failed.single().reason)
+        assertEquals(
+            listOf(ItemId("i1")),
+            controller.currentState().staged,
+            "a refused item is still on disk, so it must stay staged, not look deleted",
+        )
+        assertEquals(listOf(ItemId("i2")), controller.currentState().decided)
+    }
+
+    @Test
+    fun `Apply keeps an item with no reported outcome staged`() = runTest {
+        val silent = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId) =
+                QuarantineOutcome(moved = emptySet(), failures = emptyList())
+
+            override suspend fun restoreSession(session: SessionId): Int = 0
+        }
+        val controller = newController(mutations = silent)
+        controller.start(DeckQuery.Folder(source.id))
+        controller.decide(Gesture.DELETE)
+
+        val result = controller.applyStaged()
+
+        assertEquals(0, result.quarantined)
+        assertEquals(listOf(ItemId("i1")), result.failed.map { it.item.id })
+        assertEquals(listOf(ItemId("i1")), controller.currentState().staged)
+        assertTrue(controller.currentState().decided.isEmpty())
     }
 
     private companion object {

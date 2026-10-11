@@ -1,8 +1,11 @@
 package com.swipedelete.feature.deck.session
 
 import com.swipedelete.core.model.BatchId
+import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SessionId
+import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.staleReason as staleReasonFor
@@ -25,12 +28,15 @@ class GatewaySessionMutations(
     private val gateway: StorageGateway,
 ) : SessionMutations {
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int =
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome =
         when (val result = gateway.quarantine(items, batch)) {
-            is QuarantineResult.Quarantined -> result.entries.size
-            is QuarantineResult.Partial -> result.entries.size
-            is QuarantineResult.InsufficientSpace -> 0
+            is QuarantineResult.Quarantined -> QuarantineOutcome(result.entries.movedIds(), emptyList())
+            is QuarantineResult.Partial -> QuarantineOutcome(result.entries.movedIds(), result.failures)
+            is QuarantineResult.InsufficientSpace ->
+                QuarantineOutcome(emptySet(), items.map { Failure(it.id, INSUFFICIENT_SPACE) })
         }
+
+    private fun List<JournalEntry>.movedIds(): Set<ItemId> = mapTo(linkedSetOf()) { it.itemId }
 
     override suspend fun restoreSession(session: SessionId): Int = 0
 
@@ -41,5 +47,9 @@ class GatewaySessionMutations(
             return "No longer readable: ${error.message ?: "the item could not be read"}"
         }
         return staleReasonFor(item, actual)
+    }
+
+    private companion object {
+        const val INSUFFICIENT_SPACE = "insufficient_space"
     }
 }

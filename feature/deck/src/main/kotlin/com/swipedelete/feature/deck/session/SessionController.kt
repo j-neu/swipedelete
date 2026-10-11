@@ -14,6 +14,7 @@ import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.model.Slot
 import com.swipedelete.core.model.SlotId
 import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.DeckAction
 import com.swipedelete.feature.deck.domain.DeckBuilder
@@ -46,8 +47,8 @@ fun interface MutationGate {
  * directly observable in tests.
  */
 interface SessionMutations {
-    /** Moves [items] into quarantine (AC-3) and returns how many actually moved. */
-    suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int
+    /** Moves [items] into quarantine (AC-3) and reports, per item, what actually moved. */
+    suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome
 
     /** Restores every quarantined item belonging to [session] and returns the count. */
     suspend fun restoreSession(session: SessionId): Int
@@ -60,11 +61,25 @@ interface SessionMutations {
     suspend fun staleReason(item: MediaItem): String? = null
 }
 
+/**
+ * What a quarantine call did. An item is only gone from the user's storage when
+ * its id is in [moved]; every other item is still on disk, with a reason in
+ * [failures] where the gateway gave one.
+ */
+data class QuarantineOutcome(val moved: Set<ItemId>, val failures: List<Failure>)
+
 /** A staged item that was skipped by Apply because it changed on disk (AC-8). */
 data class StaleAbort(val item: MediaItem, val reason: String)
 
 /** The outcome of committing the staging strip (SPEC 5.5 / 6.6). */
-data class ApplyResult(val quarantined: Int, val aborted: List<StaleAbort>) {
+/** A staged item the gateway did not move (protected root, no space, failed delete). */
+data class ApplyFailure(val item: MediaItem, val reason: String)
+
+data class ApplyResult(
+    val quarantined: Int,
+    val aborted: List<StaleAbort>,
+    val failed: List<ApplyFailure> = emptyList(),
+) {
     val applied: Int get() = quarantined
     val hasAborts: Boolean get() = aborted.isNotEmpty()
 }
@@ -323,15 +338,24 @@ class SessionController(
             val reason = mutations.staleReason(item)
             if (reason == null) fresh += item else aborted += StaleAbort(item, reason)
         }
-        val moved = if (fresh.isEmpty()) 0 else mutations.quarantine(fresh, batches())
-        val applied = fresh.mapTo(mutableSetOf()) { it.id }
+        val outcome = if (fresh.isEmpty()) {
+            QuarantineOutcome(emptySet(), emptyList())
+        } else {
+            mutations.quarantine(fresh, batches())
+        }
+        // Only an item the gateway reports as moved is done. Anything else is still
+        // on disk, so it stays staged and is reported, never shown as deleted.
+        val applied = fresh.map { it.id }.filter { it in outcome.moved }
+        val reasons = outcome.failures.associate { it.itemId to it.reason }
+        val failed = fresh.filterNot { it.id in outcome.moved }
+            .map { ApplyFailure(it, reasons[it.id] ?: NO_OUTCOME_REPORTED) }
         state = state.copy(
-            // Aborted items stay staged so they are not silently destroyed.
+            // Aborted and failed items stay staged so they are not silently dropped.
             staged = state.staged.filterNot { it in applied },
             decided = state.decided + applied,
         )
         persist(current.id, state)
-        return ApplyResult(quarantined = moved, aborted = aborted)
+        return ApplyResult(quarantined = applied.size, aborted = aborted, failed = failed)
     }
 
     /** Moves a moved item back to the location the deck captured for it. */
@@ -388,6 +412,10 @@ class SessionController(
 
     private fun requireSession(): DeckSession =
         session ?: error("start() or resume() must be called before a session action")
+
+    private companion object {
+        const val NO_OUTCOME_REPORTED = "no_outcome_reported"
+    }
 
     private fun DeckSession.toEntity(stateData: String?): DeckSessionEntity = DeckSessionEntity(
         id = id.value,

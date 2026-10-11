@@ -27,6 +27,7 @@ import com.swipedelete.feature.deck.domain.DeckQuery
 import com.swipedelete.feature.deck.domain.Gesture
 import com.swipedelete.feature.deck.session.MutationGate
 import com.swipedelete.feature.deck.session.SessionController
+import com.swipedelete.feature.deck.session.QuarantineOutcome
 import com.swipedelete.feature.deck.session.SessionMutations
 import java.io.File
 import java.nio.file.Files
@@ -204,9 +205,9 @@ private class RecordingSessionMutations : SessionMutations {
     val quarantined = mutableListOf<List<MediaItem>>()
     val restored = mutableListOf<SessionId>()
 
-    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): Int {
+    override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
         quarantined += items
-        return items.size
+        return QuarantineOutcome(moved = items.mapTo(linkedSetOf()) { it.id }, failures = emptyList())
     }
 
     override suspend fun restoreSession(session: SessionId): Int {
