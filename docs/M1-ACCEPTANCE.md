@@ -6,6 +6,33 @@ The loop is assembled and every automated suite is green, but the re-review foun
 
 This record supersedes the 2026-10-03 version, which predated the whole-branch review and described library modules as if they were the shipped loop. It keeps `docs/M0-ACCEPTANCE.md`'s honesty rule: an item is marked verified only where a command was run and its output seen. Findings reached by reading code are marked **read, not run**.
 
+## Update — M1-T16 fix wave (2026-10-11, branch `m1-t16-rereview-fixes`)
+
+**Status is still NOT ACCEPTED**, for a narrower reason: every finding below has a fix with tests, but the fixes have not been reviewed, nothing has yet driven the assembled app through a real Apply on a device, and the frame-rate criterion is unmeasured.
+
+The product owner accepted three recommendations: deck decisions are exempt from protected folders (SPEC §6.3 amended, AC-7 reworded); whole-library deletion is review-only until a consent step exists; this record is committed.
+
+| Finding | Disposition | Commit |
+|---|---|---|
+| C1 Apply reported unmoved items as deleted | Fixed. `SessionMutations.quarantine` returns a per-item `QuarantineOutcome`; only moved items leave the staging strip, the rest are shown with a plain reason. | `24d3733` |
+| I1 every MediaStore item was a protected root | Fixed by the §6.3 amendment: the deck installs `IndividuallyReviewed` around its quarantine, move and move-undo; bulk calls are refused as before. | `7c02509` |
+| I2 SAF items never matched a protected root | Fixed: matched on the decoded document path. Only path-shaped document ids (the external-storage provider) can be matched; other providers' opaque ids still cannot. | `7c02509` |
+| I3 no way to delete media the app does not own | **Scope reduction, not a fix.** Whole-library items are held back before anything is copied and reported as review-only. The app binds this off for every tier, since All Files Access is never used for media. A `createDeleteRequest` consent step is its own later task. | `9451274` |
+| I4 summary unreachable | Fixed: "Finish session" on the deck. | `f494d33` |
+| I5 summary bytes and restore were stubs | Fixed: the session keeps its quarantine entries, reports their bytes as reclaimable and restores them. In memory only — a session resumed after a process death shows nothing restorable and disables the button. | `7738f6d` |
+| I6 resume never invoked | Fixed: the latest ACTIVE session with work left is resumed; otherwise it is marked ABANDONED. | `93d4d41` |
+| I7 TAG slots did nothing | Fixed: new `TagDao` (no schema change), the deck advances, undo removes the tag. | `706ea6c` |
+| I8 moves skipped the stale check; failed undo reported as undone | Fixed: moves are stale-checked; a failed or impossible undo throws `UndoFailedException` and leaves state unchanged. Also found and fixed: an applied delete could be un-staged from the history strip or by discarding staging while its file sat in quarantine. | `706ea6c` |
+| I9 unhandled errors | Fixed: every view-model action reports failure in `DeckUiState.error`. | `f494d33` |
+
+Minors fixed along the way: the move-unavailable banner can be dismissed; the dock closes after a selection. The other minors are open.
+
+Run on the branch head (`9451274`): `testDebugUnitTest` **407 tests, 0 failures** (`:feature:deck` 152, `:core:storage` 109, `:feature:viewer` 51, `:app` 40, `:core:designsystem` 16, `:feature:settings` 15, `:core:database` 13, `:core:common` 11); `connectedDebugAndroidTest` on the API 36 emulator **26 tests, 0 failures, 2 skipped**; `:app:assembleDebug` builds.
+
+Still needed for acceptance: a review of this fix wave; one instrumented end-to-end scenario through the assembled UI on files the test does not own; the 500-item frame-rate measurement. The section "What acceptance needs" below is superseded by this paragraph.
+
+The rest of this record is the re-review as written against `d73c046`, kept as the evidence the fixes answer.
+
 ## Scope
 
 M1 is the core triage loop: MediaStore catalogue, pure-Kotlin deck engine, swipe surface, staged deletes with Apply, five-slot dock, viewer, autoplay and memory ceiling, sessions/resume/summary, and the accessibility and capability-request loop. Tasks 28–41 of `docs/tasks.md` (expanded in `docs/M1-PLAN.md`), plus two fix tasks added after the first review:
