@@ -176,6 +176,25 @@ class SessionApplyTest {
         assertTrue(controller.currentState().decided.isEmpty())
     }
 
+    @Test
+    fun `discarding the staging strip leaves already applied deletes in quarantine`() = runTest {
+        val controller = newController()
+        controller.start(DeckQuery.Folder(source.id))
+        controller.decide(Gesture.DELETE)
+        controller.applyStaged()
+        controller.decide(Gesture.DELETE)
+
+        controller.discardStaging()
+
+        assertTrue(controller.currentState().staged.isEmpty())
+        assertEquals(
+            listOf(ItemId("i1")),
+            controller.currentState().decided,
+            "an applied delete is in quarantine; discarding staging must not put it back in the queue",
+        )
+        assertTrue(ItemId("i1") !in controller.currentState().items, "the quarantined item must not reappear as a card")
+    }
+
     private companion object {
         val SESSION = SessionId("session-apply")
     }

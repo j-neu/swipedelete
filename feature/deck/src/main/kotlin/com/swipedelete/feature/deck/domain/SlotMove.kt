@@ -1,5 +1,6 @@
 package com.swipedelete.feature.deck.domain
 
+import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.Slot
 import com.swipedelete.core.model.SlotId
@@ -25,6 +26,9 @@ fun effectiveSlotMode(slot: Slot): SlotMode = effectiveSlotMode(slot.destination
 fun interface SlotTagSink {
     suspend fun tag(tag: Tag)
 
+    /** Removes a tag again when the user undoes the decision. */
+    suspend fun untag(itemId: ItemId, slotId: SlotId) = Unit
+
     companion object {
         val NoOp: SlotTagSink = SlotTagSink { }
     }
@@ -43,6 +47,9 @@ sealed interface SlotMoveOutcome {
 
     /** The slot's destination is not among the live grants (e.g. a revoked grant). */
     data class DestinationUnavailable(val destinationUri: String?) : SlotMoveOutcome
+
+    /** The item changed on disk since the deck was built, so it was not moved (AC-8). */
+    data class Stale(val reason: String) : SlotMoveOutcome
 
     data class Failed(val reason: String) : SlotMoveOutcome
 }

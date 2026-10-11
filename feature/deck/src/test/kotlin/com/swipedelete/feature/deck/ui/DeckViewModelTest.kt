@@ -4,6 +4,7 @@ import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.database.entity.SlotEntity
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.SlotMode
 import com.swipedelete.core.model.SourceRef
 import com.swipedelete.core.storage.PageToken
 import com.swipedelete.core.storage.fake.FakeStorageGateway
@@ -13,6 +14,7 @@ import com.swipedelete.feature.deck.domain.DeckBuilder
 import com.swipedelete.feature.deck.domain.FakeScanPort
 import com.swipedelete.feature.deck.domain.FixedClock
 import com.swipedelete.feature.deck.domain.Gesture
+import com.swipedelete.feature.deck.domain.SlotTagSink
 import com.swipedelete.feature.deck.domain.mediaItem
 import com.swipedelete.feature.deck.domain.page
 import com.swipedelete.feature.deck.domain.sourceRef
@@ -70,6 +72,7 @@ class DeckViewModelTest {
         mutations: SessionMutations = RecordingMutations(),
         scanPort: SourceScanPort = FakeScanPort(page(items, truncated = truncated)),
         sessions: FakeDeckSessionDao = FakeDeckSessionDao(),
+        slots: SlotDao = FakeSlotDao(),
     ) = DeckViewModel(
         builder = DeckBuilder(
             scanner = { scanPort },
@@ -78,7 +81,8 @@ class DeckViewModelTest {
         ),
         gateway = gateway,
         sessions = sessions,
-        slots = FakeSlotDao(),
+        slots = slots,
+        tags = SlotTagSink.NoOp,
         gate = MutationGate { },
         mutations = mutations,
         clock = FixedClock(0L),
@@ -203,6 +207,21 @@ class DeckViewModelTest {
 
         assertEquals(ItemId("i1"), reopened.state.value.current?.id)
         assertEquals(2, dao.recent(10).size)
+    }
+
+    @Test
+    fun `a move refused because the card changed on disk is shown, not ignored`() = runTest {
+        val slotDao = FakeSlotDao()
+        slotDao.upsert(SlotEntity(1, "Memes", "folder", 0L, source.treeUri, SlotMode.MOVE, 0))
+        val changed = object : SessionMutations by RecordingMutations() {
+            override suspend fun staleReason(item: MediaItem): String? = "size changed since the deck was built"
+        }
+        val vm = viewModel(mutations = changed, slots = slotDao)
+
+        vm.onSlotSelected(vm.state.value.slots.single())
+
+        assertEquals("size changed since the deck was built", vm.state.value.error)
+        assertEquals(ItemId("i1"), vm.state.value.current?.id, "the card stays where it was")
     }
 
     private class FakeSlotDao : SlotDao {

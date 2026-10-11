@@ -11,6 +11,7 @@ import com.swipedelete.core.database.dao.MediaItemDao
 import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.database.dao.SnapshotDao
 import com.swipedelete.core.database.dao.SourceRefDao
+import com.swipedelete.core.database.dao.TagDao
 import com.swipedelete.core.database.entity.DeckSessionEntity
 import com.swipedelete.core.database.entity.JournalEntryEntity
 import com.swipedelete.core.database.entity.KeepMarkEntity
@@ -44,6 +45,7 @@ abstract class SwipeDeleteDatabase : RoomDatabase() {
     abstract fun slotDao(): SlotDao
     abstract fun deckSessionDao(): DeckSessionDao
     abstract fun snapshotDao(): SnapshotDao
+    abstract fun tagDao(): TagDao
 
     companion object {
         /**

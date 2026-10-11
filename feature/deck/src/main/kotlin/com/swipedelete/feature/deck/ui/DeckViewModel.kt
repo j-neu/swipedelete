@@ -17,6 +17,7 @@ import com.swipedelete.feature.deck.domain.DeckQuery
 import com.swipedelete.feature.deck.domain.DeckState
 import com.swipedelete.feature.deck.domain.Gesture
 import com.swipedelete.feature.deck.domain.SlotMoveOutcome
+import com.swipedelete.feature.deck.domain.SlotTagSink
 import com.swipedelete.feature.deck.session.ApplyFailure
 import com.swipedelete.feature.deck.session.MutationGate
 import com.swipedelete.feature.deck.session.SessionController
@@ -78,6 +79,7 @@ class DeckViewModel @Inject constructor(
     private val slots: SlotDao,
     private val gate: MutationGate,
     private val mutations: SessionMutations,
+    private val tags: SlotTagSink,
     private val clock: Clock,
 ) : ViewModel() {
 
@@ -89,6 +91,7 @@ class DeckViewModel @Inject constructor(
         mutations = mutations,
         measuredFreed = { 0L },
         gateway = gateway,
+        tags = tags,
     )
 
     /** The full [Slot] behind each dock slot, so a drop can perform the move. */
@@ -144,10 +147,13 @@ class DeckViewModel @Inject constructor(
     fun onSlotSelected(dock: DockSlot) = act {
         val item = _state.value.current ?: return@act
         val slot = slotModels[dock.id] ?: return@act
-        when (controller.applySlotMove(slot, item)) {
+        when (val outcome = controller.applySlotMove(slot, item)) {
             is SlotMoveOutcome.DestinationUnavailable ->
                 _state.update { it.copy(moveUnavailable = true) }
-            else -> Unit
+            // A move that did not happen is said so, with the reason.
+            is SlotMoveOutcome.Stale -> _state.update { it.copy(error = outcome.reason) }
+            is SlotMoveOutcome.Failed -> _state.update { it.copy(error = outcome.reason) }
+            is SlotMoveOutcome.Moved, is SlotMoveOutcome.Renamed, is SlotMoveOutcome.Tagged -> Unit
         }
         refresh()
     }
