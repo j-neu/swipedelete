@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 
 /**
@@ -68,6 +69,7 @@ class DeckViewModelTest {
         truncated: Boolean = false,
         mutations: SessionMutations = RecordingMutations(),
         scanPort: SourceScanPort = FakeScanPort(page(items, truncated = truncated)),
+        sessions: FakeDeckSessionDao = FakeDeckSessionDao(),
     ) = DeckViewModel(
         builder = DeckBuilder(
             scanner = { scanPort },
@@ -75,7 +77,7 @@ class DeckViewModelTest {
             clock = FixedClock(0L),
         ),
         gateway = gateway,
-        sessions = FakeDeckSessionDao(),
+        sessions = sessions,
         slots = FakeSlotDao(),
         gate = MutationGate { },
         mutations = mutations,
@@ -177,6 +179,30 @@ class DeckViewModelTest {
 
         assertEquals("journal unavailable", vm.state.value.error)
         assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id })
+    }
+
+    @Test
+    fun `reopening the app resumes the active session at the same card`() = runTest {
+        val dao = FakeDeckSessionDao()
+        viewModel(sessions = dao).decide(Gesture.KEEP)
+
+        val reopened = viewModel(sessions = dao)
+
+        assertEquals(ItemId("i2"), reopened.state.value.current?.id, "the position must survive a restart")
+        assertEquals(1, dao.recent(10).size, "resuming must not start a second session")
+    }
+
+    @Test
+    fun `a finished session is not resumed`() = runTest {
+        val dao = FakeDeckSessionDao()
+        val first = viewModel(sessions = dao)
+        first.decide(Gesture.KEEP)
+        first.finish()
+
+        val reopened = viewModel(sessions = dao)
+
+        assertEquals(ItemId("i1"), reopened.state.value.current?.id)
+        assertEquals(2, dao.recent(10).size)
     }
 
     private class FakeSlotDao : SlotDao {

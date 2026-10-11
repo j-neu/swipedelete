@@ -8,6 +8,7 @@ import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.model.DeckStatus
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.model.Slot
 import com.swipedelete.core.model.SlotId
 import com.swipedelete.core.storage.StorageGateway
@@ -100,14 +101,42 @@ class DeckViewModel @Inject constructor(
         act { startDefaultDeck() }
     }
 
-    /** Builds a deck for the first available source, or shows the empty deck. */
+    /**
+     * Resumes the session a crash or exit left behind (SPEC 5.5), or else builds a
+     * deck for the first available source, or shows the empty deck.
+     */
     suspend fun startDefaultDeck() {
+        if (resumeActiveSession()) return
         val source = runCatching { gateway.sources() }.getOrDefault(emptyList()).firstOrNull()
         if (source == null) {
             _state.update { it.copy(loading = false, hasSource = false) }
             return
         }
         refresh(controller.start(DeckQuery.Folder(source.id)))
+    }
+
+    /**
+     * True when an ACTIVE session with work left was restored. One that cannot be
+     * restored, or has nothing left to do, is closed so it is not offered again.
+     */
+    private suspend fun resumeActiveSession(): Boolean {
+        val active = sessions.latestActive() ?: return false
+        val resumed = try {
+            controller.resume(SessionId(active.id))
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            null
+        }
+        val hasWorkLeft = resumed != null &&
+            controller.snapshotItems().isNotEmpty() &&
+            (resumed.cursor < resumed.items.size || resumed.staged.isNotEmpty())
+        if (!hasWorkLeft) {
+            sessions.markStatus(active.id, DeckStatus.ABANDONED)
+            return false
+        }
+        refresh(resumed)
+        return true
     }
 
     fun decide(gesture: Gesture) = act { refresh(controller.decide(gesture)) }
