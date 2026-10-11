@@ -293,6 +293,17 @@ class ProtectedRootsTest {
         assertTrue(gateway.isProtected(item(path = uri, relativePath = "Album/IMG_1.jpg")))
     }
 
+    /**
+     * The shape the SAF gateway actually mints: `SafUri.join(treeUri, relativePath)`,
+     * where only the tree part is encoded.
+     */
+    @Test
+    fun `a folder-grant item is recognised from the gateway's own tree-relative uri`() {
+        val tree = "content://com.android.externalstorage.documents/tree/primary%3ADCIM%2FAlbum"
+
+        assertTrue(gateway.isProtected(item(path = "$tree/trip/IMG_1.jpg", relativePath = "trip/IMG_1.jpg")))
+    }
+
     @Test
     fun `a folder-grant item outside every protected root is not protected`() {
         val uri = "content://com.android.externalstorage.documents/tree/primary%3AMemes" +
