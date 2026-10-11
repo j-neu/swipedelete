@@ -33,6 +33,9 @@ const val DeckPartialBannerTestTag: String = "deck_partial_banner"
 /** AC-8: the banner that names the items an Apply refused because they changed. */
 const val DeckStaleAbortBannerTestTag: String = "deck_stale_abort_banner"
 
+/** The banner for a restore that left items in quarantine. */
+const val DeckNotRestoredBannerTestTag: String = "deck_not_restored_banner"
+
 /** The banner for a deck action that failed outright. */
 const val DeckErrorBannerTestTag: String = "deck_error_banner"
 
@@ -71,6 +74,7 @@ fun DeckRoute(
         onDismissAborts = viewModel::dismissAborts,
         onDismissFailures = viewModel::dismissFailures,
         onDismissError = viewModel::dismissError,
+        onDismissNotRestored = viewModel::dismissNotRestored,
         onDismissMoveUnavailable = viewModel::dismissMoveUnavailable,
         modifier = modifier,
         topContent = topContent,
@@ -97,6 +101,7 @@ fun DeckRouteContent(
     onDismissAborts: () -> Unit = {},
     onDismissFailures: () -> Unit = {},
     onDismissError: () -> Unit = {},
+    onDismissNotRestored: () -> Unit = {},
     onDismissMoveUnavailable: () -> Unit = {},
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
@@ -118,6 +123,14 @@ fun DeckRouteContent(
                 text = stringResource(R.string.deck_error, error),
                 tag = DeckErrorBannerTestTag,
                 onDismiss = onDismissError,
+            )
+        }
+
+        if (state.notRestored > 0) {
+            NoticeBanner(
+                text = stringResource(R.string.deck_not_restored, state.notRestored),
+                tag = DeckNotRestoredBannerTestTag,
+                onDismiss = onDismissNotRestored,
             )
         }
 
