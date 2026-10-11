@@ -78,6 +78,8 @@ fun SessionSummaryScreen(
                 onClick = onRestoreEverything,
                 text = stringResource(R.string.session_summary_restore_everything),
                 modifier = Modifier.fillMaxWidth(),
+                // Nothing restorable means the button would do nothing; say so by state.
+                enabled = summary.restorable > 0,
             )
 
             if (exitPrompt != null) {

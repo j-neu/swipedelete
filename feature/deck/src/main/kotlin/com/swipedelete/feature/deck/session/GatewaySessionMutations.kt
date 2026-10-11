@@ -4,9 +4,9 @@ import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
-import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.storage.Failure
 import com.swipedelete.core.storage.QuarantineResult
+import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.staleReason as staleReasonFor
 
@@ -18,11 +18,8 @@ import com.swipedelete.feature.deck.domain.staleReason as staleReasonFor
  * with the frozen snapshot. A changed (or vanished) item returns a user-visible
  * reason, so the session aborts it instead of deleting the wrong bytes.
  *
- * [restoreSession] is a documented gap: the M1 journal does not yet tag rows
- * with a session id (`JournalingStorageGateway` writes `sessionId = null`), so
- * there is no query that can enumerate one session's quarantine entries. The
- * panic button is wired end-to-end but restores nothing until the journal
- * carries the session link (tracked in the ledger as M1-T15 ruling).
+ * [restore] returns only the items the gateway reports as restored; a conflict
+ * or a hash mismatch leaves the item in quarantine and out of the result.
  */
 class GatewaySessionMutations(
     private val gateway: StorageGateway,
@@ -30,15 +27,16 @@ class GatewaySessionMutations(
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome =
         when (val result = gateway.quarantine(items, batch)) {
-            is QuarantineResult.Quarantined -> QuarantineOutcome(result.entries.movedIds(), emptyList())
-            is QuarantineResult.Partial -> QuarantineOutcome(result.entries.movedIds(), result.failures)
+            is QuarantineResult.Quarantined -> QuarantineOutcome(result.entries.movedIds(), emptyList(), result.entries)
+            is QuarantineResult.Partial -> QuarantineOutcome(result.entries.movedIds(), result.failures, result.entries)
             is QuarantineResult.InsufficientSpace ->
                 QuarantineOutcome(emptySet(), items.map { Failure(it.id, INSUFFICIENT_SPACE) })
         }
 
     private fun List<JournalEntry>.movedIds(): Set<ItemId> = mapTo(linkedSetOf()) { it.itemId }
 
-    override suspend fun restoreSession(session: SessionId): Int = 0
+    override suspend fun restore(entries: List<JournalEntry>): Set<ItemId> =
+        entries.filter { gateway.restore(it) is RestoreResult.Restored }.mapTo(linkedSetOf()) { it.itemId }
 
     override suspend fun staleReason(item: MediaItem): String? {
         val actual = try {

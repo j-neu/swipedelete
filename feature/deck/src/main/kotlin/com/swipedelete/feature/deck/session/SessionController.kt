@@ -9,6 +9,7 @@ import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.DeckSession
 import com.swipedelete.core.model.DeckStatus
 import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SessionId
 import com.swipedelete.core.model.Slot
@@ -50,8 +51,8 @@ interface SessionMutations {
     /** Moves [items] into quarantine (AC-3) and reports, per item, what actually moved. */
     suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome
 
-    /** Restores every quarantined item belonging to [session] and returns the count. */
-    suspend fun restoreSession(session: SessionId): Int
+    /** Restores [entries] from quarantine and returns the items that are back in place. */
+    suspend fun restore(entries: List<JournalEntry>): Set<ItemId>
 
     /**
      * Non-null when [item] must not be destroyed because it changed on disk since
@@ -66,7 +67,12 @@ interface SessionMutations {
  * its id is in [moved]; every other item is still on disk, with a reason in
  * [failures] where the gateway gave one.
  */
-data class QuarantineOutcome(val moved: Set<ItemId>, val failures: List<Failure>)
+data class QuarantineOutcome(
+    val moved: Set<ItemId>,
+    val failures: List<Failure>,
+    /** The journal entries of the moved items, which a later restore needs. */
+    val entries: List<JournalEntry> = emptyList(),
+)
 
 /** A staged item that was skipped by Apply because it changed on disk (AC-8). */
 data class StaleAbort(val item: MediaItem, val reason: String)
@@ -109,6 +115,8 @@ data class SessionSummary(
     val measuredFreedBytes: Long,
     val reclaimableBytes: Long,
     val status: DeckStatus,
+    /** How many items "restore everything" can still bring back from this session. */
+    val restorable: Int = 0,
 ) {
     /** The only renderer for the reclaimed-so-far figure (AC-9). */
     val reclaimableText: String get() = formatReclaimable(reclaimableBytes)
@@ -124,6 +132,7 @@ fun sessionSummary(
     measuredFreedBytes: Long,
     reclaimableBytes: Long,
     status: DeckStatus,
+    restorable: Int = 0,
 ): SessionSummary = SessionSummary(
     sessionId = sessionId,
     reviewed = state.history.size,
@@ -140,6 +149,7 @@ fun sessionSummary(
     measuredFreedBytes = measuredFreedBytes,
     reclaimableBytes = reclaimableBytes,
     status = status,
+    restorable = restorable,
 )
 
 /**
@@ -159,7 +169,11 @@ class SessionController(
     private val gate: MutationGate,
     private val mutations: SessionMutations,
     private val measuredFreed: suspend () -> Long,
-    private val reclaimable: suspend () -> Long,
+    /**
+     * Overrides the reclaimable figure; by default it is the bytes this session
+     * holds in quarantine, which the session knows exactly.
+     */
+    private val reclaimable: (suspend () -> Long)? = null,
     private val sessionIds: () -> SessionId = { SessionId("session-${UUID.randomUUID()}") },
     private val batches: () -> BatchId = { BatchId("batch-${UUID.randomUUID()}") },
     /**
@@ -172,6 +186,14 @@ class SessionController(
 
     private val moveOrigins = HashMap<ItemId, MediaItem>()
     private val moveCurrent = HashMap<ItemId, MediaItem>()
+
+    /**
+     * The quarantine entries of this session, kept so "restore everything" has
+     * something real to restore. In memory only: after a process death the
+     * session resumes with nothing restorable here and [SessionSummary.restorable]
+     * says so (the History screen is the durable route, M2).
+     */
+    private val held = ArrayList<JournalEntry>()
 
     private val undo = UndoStack { action -> undoMove(action) }
 
@@ -346,6 +368,7 @@ class SessionController(
         // Only an item the gateway reports as moved is done. Anything else is still
         // on disk, so it stays staged and is reported, never shown as deleted.
         val applied = fresh.map { it.id }.filter { it in outcome.moved }
+        held += outcome.entries.filter { it.itemId in outcome.moved }
         val reasons = outcome.failures.associate { it.itemId to it.reason }
         val failed = fresh.filterNot { it.id in outcome.moved }
             .map { ApplyFailure(it, reasons[it.id] ?: NO_OUTCOME_REPORTED) }
@@ -381,7 +404,15 @@ class SessionController(
     suspend fun restoreEverything(): Int {
         val current = requireSession()
         gate.await()
-        return mutations.restoreSession(current.id)
+        val restored = mutations.restore(held.toList())
+        held.removeAll { it.itemId in restored }
+        // A restored item is back on disk, so it is no longer a quarantined decision.
+        state = state.copy(
+            decided = state.decided.filterNot { it in restored },
+            history = state.history.filterNot { it is DeckAction.Delete && it.item in restored },
+        )
+        persist(current.id, state)
+        return restored.size
     }
 
     /** Closes the session when the run ends. */
@@ -397,8 +428,9 @@ class SessionController(
             sessionId = current.id,
             state = state,
             measuredFreedBytes = measuredFreed(),
-            reclaimableBytes = reclaimable(),
+            reclaimableBytes = reclaimable?.invoke() ?: held.sumOf { it.sizeBytes },
             status = current.status,
+            restorable = held.size,
         )
     }
 

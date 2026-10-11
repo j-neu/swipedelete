@@ -87,7 +87,6 @@ class DeckViewModel @Inject constructor(
         gate = gate,
         mutations = mutations,
         measuredFreed = { 0L },
-        reclaimable = { 0L },
         gateway = gateway,
     )
 

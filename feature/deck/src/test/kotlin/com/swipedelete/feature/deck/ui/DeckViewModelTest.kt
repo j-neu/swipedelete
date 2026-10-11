@@ -114,7 +114,7 @@ class DeckViewModelTest {
             override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
                 com.swipedelete.feature.deck.session.allMoved(items)
 
-            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
 
             override suspend fun staleReason(item: MediaItem): String? =
                 if (item.id == ItemId("i1")) "changed on disk" else null
@@ -137,7 +137,7 @@ class DeckViewModelTest {
                     failures = items.map { com.swipedelete.core.storage.Failure(it.id, "protected_root") },
                 )
 
-            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
         }
         val vm = viewModel(mutations = refusing)
 
@@ -168,7 +168,7 @@ class DeckViewModelTest {
             override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
                 throw IllegalStateException("journal unavailable")
 
-            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
         }
         val vm = viewModel(mutations = failing)
 

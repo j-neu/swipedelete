@@ -10,6 +10,7 @@ import com.swipedelete.core.database.entity.JournalEntryEntity
 import com.swipedelete.core.model.BatchId
 import com.swipedelete.core.model.DeckStatus
 import com.swipedelete.core.model.ItemId
+import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.SessionId
@@ -76,14 +77,14 @@ class NoMutationBeforeRecoveryTest {
         runCurrent()
 
         assertTrue(
-            mutations.restored.isEmpty(),
+            mutations.restoreCalls == 0,
             "a destructive restore must not run while recovery is not ready",
         )
 
         journal.release()
         job.join()
 
-        assertEquals(listOf(SESSION), mutations.restored, "the restore runs once recovery is ready")
+        assertEquals(1, mutations.restoreCalls, "the restore runs once recovery is ready")
     }
 
     @Test
@@ -203,16 +204,16 @@ private class GatedRecoveryJournalDao : JournalDao {
 
 private class RecordingSessionMutations : SessionMutations {
     val quarantined = mutableListOf<List<MediaItem>>()
-    val restored = mutableListOf<SessionId>()
+    var restoreCalls = 0
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome {
         quarantined += items
         return QuarantineOutcome(moved = items.mapTo(linkedSetOf()) { it.id }, failures = emptyList())
     }
 
-    override suspend fun restoreSession(session: SessionId): Int {
-        restored += session
-        return 1
+    override suspend fun restore(entries: List<JournalEntry>): Set<ItemId> {
+        restoreCalls++
+        return emptySet()
     }
 }
 

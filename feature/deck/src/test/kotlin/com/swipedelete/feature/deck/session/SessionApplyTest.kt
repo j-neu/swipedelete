@@ -80,7 +80,7 @@ class SessionApplyTest {
                 return allMoved(items)
             }
 
-            override suspend fun restoreSession(session: SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
         }
         val controller = newController(gate = MutationGate { order += "awaitReady" }, mutations = ordering)
         controller.start(DeckQuery.Folder(source.id))
@@ -104,7 +104,7 @@ class SessionApplyTest {
         val changed = object : SessionMutations {
             override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome = allMoved(items)
 
-            override suspend fun restoreSession(session: SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
 
             override suspend fun staleReason(item: MediaItem): String? =
                 if (item.id == ItemId("i1")) "size changed since the deck was built" else null
@@ -136,7 +136,7 @@ class SessionApplyTest {
                 failures = listOf(Failure(ItemId("i1"), "protected_root")),
             )
 
-            override suspend fun restoreSession(session: SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
         }
         val controller = newController(mutations = refusing)
         controller.start(DeckQuery.Folder(source.id))
@@ -162,7 +162,7 @@ class SessionApplyTest {
             override suspend fun quarantine(items: List<MediaItem>, batch: BatchId) =
                 QuarantineOutcome(moved = emptySet(), failures = emptyList())
 
-            override suspend fun restoreSession(session: SessionId): Int = 0
+            override suspend fun restore(entries: List<com.swipedelete.core.model.JournalEntry>): Set<ItemId> = emptySet()
         }
         val controller = newController(mutations = silent)
         controller.start(DeckQuery.Folder(source.id))

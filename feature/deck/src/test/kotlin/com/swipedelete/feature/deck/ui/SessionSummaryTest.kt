@@ -1,6 +1,7 @@
 package com.swipedelete.feature.deck.ui
 
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -174,7 +175,15 @@ class SessionSummaryTest {
         measuredFreedBytes = 0L,
         reclaimableBytes = reclaimableBytes,
         status = DeckStatus.ACTIVE,
+        restorable = 1,
     )
+
+    @Test
+    fun `with nothing left to restore the panic button is disabled, not a silent no-op`() {
+        show(summary().copy(restorable = 0))
+
+        composeRule.onNodeWithText("Restore everything from this session").assertIsNotEnabled()
+    }
 
     @Test
     fun `the summary shows the reclaimable figure and never the word freed`() {
