@@ -2,6 +2,7 @@ package com.swipedelete.feature.deck.e2e
 
 import android.content.Context
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -14,6 +15,7 @@ import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.OpKind
 import com.swipedelete.feature.deck.ui.DeckNotRestoredBannerTestTag
 import com.swipedelete.feature.deck.ui.SwipeCardTestTag
+import com.swipedelete.feature.deck.ui.ThumbnailImageTestTag
 import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -76,6 +78,16 @@ class DeckEndToEndInstrumentedTest {
 
         val rows = runBlocking { harness.db.journalDao().page(limit = 10, offset = 0) }
         assertEquals(listOf(OpKind.QUARANTINE to JournalState.DONE), rows.map { it.opKind to it.state })
+    }
+
+    @Test
+    fun the_card_shows_the_real_image_of_a_folder_grant_item() {
+        rule.waitUntil(TIMEOUT) { state.current != null }
+
+        // The tag is only on a decoded image; the blank fallback surface has none.
+        rule.waitUntil(TIMEOUT) {
+            rule.onAllNodesWithTag(ThumbnailImageTestTag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     /**
