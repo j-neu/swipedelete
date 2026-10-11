@@ -1,0 +1,5 @@
+# Scripts that run on the Linux CI runner must keep LF endings.
+gradlew text eol=lf
+*.sh text eol=lf
+*.bat text eol=crlf
+.github/workflows/*.yml text eol=lf
