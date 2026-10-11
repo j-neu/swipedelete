@@ -60,6 +60,8 @@ data class DeckUiState(
     val moveUnavailable: Boolean = false,
     /** The last failure of a deck action, shown to the user rather than swallowed. */
     val error: String? = null,
+    /** How many items the last "restore everything" left in quarantine. */
+    val notRestored: Int = 0,
 )
 
 /**
@@ -178,9 +180,14 @@ class DeckViewModel @Inject constructor(
     }
 
     fun restoreEverything() = act {
-        controller.restoreEverything()
+        val requested = controller.summary().restorable
+        val restored = controller.restoreEverything()
+        // A restore that leaves items behind is reported; it is never a silent no-op.
+        _state.update { it.copy(notRestored = requested - restored) }
         refresh()
     }
+
+    fun dismissNotRestored() = _state.update { it.copy(notRestored = 0) }
 
     fun dismissError() = _state.update { it.copy(error = null) }
 

@@ -6,6 +6,46 @@ The loop is assembled and every automated suite is green, but the re-review foun
 
 This record supersedes the 2026-10-03 version, which predated the whole-branch review and described library modules as if they were the shipped loop. It keeps `docs/M0-ACCEPTANCE.md`'s honesty rule: an item is marked verified only where a command was run and its output seen. Findings reached by reading code are marked **read, not run**.
 
+## Update — M1-T17 device acceptance (2026-10-11, branch `m1-t17-device-acceptance`)
+
+**Status: NOT ACCEPTED.** The two missing acceptance pieces now exist and were run. One passes; the exit criterion fails; and the end-to-end run found a restore defect. The T16 fix wave was reviewed by the product owner and merged (`a5f2afc`).
+
+Both tests live in `feature/deck/src/androidTest/.../e2e/` and drive the real `DeckViewModel` and `DeckRoute` over a real SAF tree (the shared `TestDocumentsProvider`), the production decorator order, an on-disk Room journal and a real quarantine directory. All files are in the test app's private cache directory. What they are **not**: the Hilt graph, `AppNavHost` or `RecoveryCoordinator`, which live in `:app`.
+
+### 1. End-to-end Apply through the assembled deck — passes
+
+`DeckEndToEndInstrumentedTest`, 2/2 on the API 36 emulator and on a OnePlus Nord CE (EB2103, Android 13 / API 33) — the first run of anything on an API other than 36. A touch swipe only stages; Apply moves the file to quarantine byte-identical, writes one `QUARANTINE`/`DONE` journal row, and leaves a kept item untouched.
+
+### 2. Defect found: a quarantined folder-grant (SAF) item cannot be restored
+
+`QuarantineStore.restore` only writes back to a raw absolute path and refuses a document URI with `no_raw_original_path`. Folder grants are the app's default tier and, since T16, the only path that can delete at all — so today **nothing the deck quarantines can be restored from inside the app**. AC-3 ("verified-hash restore") was accepted in M0 on raw paths only. The bytes are not lost: the verified copy stays in quarantine.
+
+Fixed on this branch: the restore button no longer fails silently; a shortfall is shown ("N item(s) could not be restored and are still safe in quarantine"). The second end-to-end test pins that behaviour and is written to fail the day SAF restore works, so it gets replaced by the byte-identical check. **SAF restore itself is not built.**
+
+### 3. Exit criterion measured — fails
+
+`DeckFrameRateInstrumentedTest` (opt-in: `-Pandroid.testInstrumentationRunnerArguments.deckFps=true`) swipes a 500-item deck of real 1080 px JPEGs with real-time injected touch at thumb pace and times every drawn frame with the platform's `FrameMetrics`. Functionally it passes: 500 decisions by touch, full undo back to the first card, no file touched.
+
+OnePlus Nord CE, Android 13, 60 Hz, **debug build**, 2026-10-11:
+
+| Deck | Frames | p50 | p90 | p99 | max | Over 16.7 ms |
+|---|---|---|---|---|---|---|
+| 30 items | 833 | 29.6 ms | 47.9 ms | 58.7 ms | 67.1 ms | 67.2 % |
+| 500 items | 14 149 | 44.1 ms | 49.3 ms | 62.6 ms | 142.4 ms | 85.6 % |
+
+The budget is 16.7 ms a frame; the median frame takes 44 ms, roughly 23 fps. A debuggable build renders slower than a release build, so these are an upper bound, but the gap is too large for that to explain it, and frame time grows with deck size (p50 30 ms → 44 ms), which points at per-frame work that scales with the deck. Not yet investigated; candidates are the history strip composing every entry, and `DeckViewModel.refresh` re-reading sources and doing linear lookups on every decision. The emulator is not a usable perf target (p50 101 ms on 30 items).
+
+Also fixed: a library test APK targets `minSdk`, so Android 16 put a "built for an older version" dialog over the test activity and swallowed the injected touches; `:feature:deck` now sets `testOptions.targetSdk = 36`.
+
+### Run on the branch head
+
+`testDebugUnitTest` **408 tests, 0 failures**. On the API 36 emulator: `:core:storage` 10/10, `:feature:deck` 5 pass + 1 skipped (the opt-in frame-rate run). The other modules' device suites were last run at `9451274` and their code is unchanged.
+
+### Needed for acceptance now
+
+1. SAF restore, so AC-3 holds for what the deck actually quarantines.
+2. The deck's frame time: find the per-frame cost, fix it, and re-measure on a release-like build.
+
 ## Update — M1-T16 fix wave (2026-10-11, branch `m1-t16-rereview-fixes`)
 
 **Status is still NOT ACCEPTED**, for a narrower reason: every finding below has a fix with tests, but the fixes have not been reviewed, nothing has yet driven the assembled app through a real Apply on a device, and the frame-rate criterion is unmeasured.

@@ -224,6 +224,19 @@ class DeckViewModelTest {
         assertEquals(ItemId("i1"), vm.state.value.current?.id, "the card stays where it was")
     }
 
+    @Test
+    fun `a restore that brings nothing back says so instead of doing nothing`() {
+        val mutations = RecordingMutations().apply { restorable = { false } }
+        val vm = viewModel(mutations = mutations)
+        vm.decide(Gesture.DELETE)
+        vm.applyStaged()
+        vm.finish()
+
+        vm.restoreEverything()
+
+        assertEquals(1, vm.state.value.notRestored, "the item is still in quarantine and the user must be told")
+    }
+
     private class FakeSlotDao : SlotDao {
         private val slots = MutableStateFlow<List<SlotEntity>>(emptyList())
         override suspend fun upsert(slot: SlotEntity) {

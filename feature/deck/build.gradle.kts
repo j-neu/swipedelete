@@ -24,7 +24,20 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    sourceSets {
+        // The real DocumentsProvider of the :core:storage device pass, reused so the
+        // end-to-end deck tests run the genuine SAF path over private files.
+        getByName("androidTest").kotlin.srcDir(
+            rootProject.file("core/storage/src/androidTestShared/kotlin"),
+        )
+    }
+
     testOptions {
+        // A library's test APK otherwise targets minSdk, and Android then puts a
+        // "built for an older version" system dialog over the test activity,
+        // which takes window focus and swallows the injected touch input.
+        targetSdk = 36
+
         // The Compose unit tests run under Robolectric, which needs the merged
         // resources on the unit-test classpath.
         unitTests.isIncludeAndroidResources = true
@@ -90,4 +103,13 @@ dependencies {
     androidTestImplementation(libs.androidx.test.core)
     androidTestImplementation(libs.androidx.test.runner)
     androidTestImplementation(libs.androidx.test.ext.junit)
+    // End-to-end deck tests: the real Compose surface, a real on-disk Room journal
+    // and the shared TestDocumentsProvider wiring constants.
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
+    androidTestImplementation(libs.androidx.activity.compose)
+    androidTestImplementation(libs.kotlin.test.junit)
+    androidTestImplementation(libs.kotlinx.coroutines.test)
+    androidTestImplementation(libs.room.runtime)
+    androidTestImplementation(testFixtures(project(":core:storage")))
 }

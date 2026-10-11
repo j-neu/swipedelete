@@ -22,6 +22,11 @@ android {
         enable = true
     }
 
+    sourceSets {
+        // TestDocumentsProvider is shared with the :feature:deck device tests.
+        getByName("androidTest").kotlin.srcDir("src/androidTestShared/kotlin")
+    }
+
     testOptions {
         // The real-Room chaos sweep and the SAF locator host test run under
         // Robolectric, which needs the merged resources on the unit-test classpath.

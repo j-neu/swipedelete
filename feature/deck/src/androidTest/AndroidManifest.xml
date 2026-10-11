@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          The same real DocumentsProvider the :core:storage device pass uses, so
+          the end-to-end deck tests run the genuine SAF path over files that live
+          only in this test app's private cache directory. See
+          core/storage/src/androidTest/AndroidManifest.xml for why each attribute
+          is required on API 30+.
+        -->
+        <provider
+            android:name="com.swipedelete.core.storage.saf.TestDocumentsProvider"
+            android:authorities="${applicationId}.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:readPermission="android.permission.MANAGE_DOCUMENTS"
+            android:writePermission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <activity
+            android:name="com.swipedelete.feature.deck.e2e.DeckHostActivity"
+            android:exported="false" />
+    </application>
+
+</manifest>
