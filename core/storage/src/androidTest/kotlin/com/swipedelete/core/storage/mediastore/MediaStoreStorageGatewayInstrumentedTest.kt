@@ -33,6 +33,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -71,6 +72,15 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
 
     private var serial = 0
 
+    /**
+     * Removes this run's rows and files while the test package still owns them.
+     * After the uninstall that ends a run they can no longer be deleted from here.
+     */
+    @After
+    fun clearFixture() {
+        clearTestRows()
+    }
+
     override fun newGateway(items: List<MediaItem>): StorageGateway {
         clearTestRows()
         items.forEach { insertItem(it) }
@@ -86,7 +96,7 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
             },
         )
         val decorated = QuarantineStorageGateway(concrete, store)
-        return ContractGateway(decorated, imagesSource, onArm = access::arm)
+        return ContractGateway(decorated, imagesSource, ROOT, onArm = access::arm)
     }
 
     override fun destinationWith(existingName: String): Destination {
@@ -208,7 +218,14 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
     }
 
     private companion object {
-        const val ROOT = "Pictures/SwipeDeleteM1T01"
+        // A fresh directory per test-process run. MediaProvider auto-renames an
+        // insert to "name (N).ext" when a file of that name already exists on
+        // disk, and files written by a previous install are not reliably gone
+        // (their rows are no longer owned by this package, so they can survive
+        // both row- and file-level cleanup). Isolating each run keeps the
+        // fixture's exact-name identity deterministic across repeated runs on a
+        // real device instead of depending on cross-install device hygiene.
+        val ROOT = "Pictures/SwipeDeleteM1T01-" + java.util.UUID.randomUUID().toString().substring(0, 8)
     }
 
     /**
@@ -220,6 +237,7 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
     private class ContractGateway(
         private val delegate: StorageGateway,
         private val imagesSource: SourceRef,
+        private val root: String,
         private val onArm: () -> Unit,
     ) : StorageGateway by delegate {
 
@@ -259,13 +277,9 @@ class MediaStoreStorageGatewayInstrumentedTest : StorageGatewayContractTest() {
         }
 
         private fun scopeOf(source: SourceRef): String = when (source.id) {
-            StorageGatewayContractTest.PRIMARY_SOURCE.id -> "$ROOT/primary/"
-            StorageGatewayContractTest.DESTINATION_SOURCE.id -> "$ROOT/export/"
-            else -> "$ROOT/${source.id.value}/"
-        }
-
-        private companion object {
-            const val ROOT = "Pictures/SwipeDeleteM1T01"
+            StorageGatewayContractTest.PRIMARY_SOURCE.id -> "$root/primary/"
+            StorageGatewayContractTest.DESTINATION_SOURCE.id -> "$root/export/"
+            else -> "$root/${source.id.value}/"
         }
     }
 
