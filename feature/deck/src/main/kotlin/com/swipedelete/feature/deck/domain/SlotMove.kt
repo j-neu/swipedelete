@@ -7,9 +7,11 @@ import com.swipedelete.core.model.SlotId
 import com.swipedelete.core.model.SlotMode
 import com.swipedelete.core.model.Tag
 import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.session.MutationGate
+import kotlinx.coroutines.withContext
 
 /**
  * Decision 4 (SPEC 5.3): a slot whose destination is set moves the file by
@@ -84,7 +86,11 @@ class SlotMoveCoordinator(
         } ?: return SlotMoveOutcome.DestinationUnavailable(slot.destinationUri)
 
         gate.await()
-        return when (val result = gateway.move(item, Destination(destination))) {
+        // One card, dropped by the user on one slot: an individually reviewed item (AC-7).
+        val result = withContext(IndividuallyReviewed(setOf(item.id))) {
+            gateway.move(item, Destination(destination))
+        }
+        return when (result) {
             is MoveResult.Moved -> SlotMoveOutcome.Moved(result.to)
             is MoveResult.NameCollision -> SlotMoveOutcome.Renamed(result.resolvedTo)
             is MoveResult.Failed -> SlotMoveOutcome.Failed(result.reason)

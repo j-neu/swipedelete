@@ -1,8 +1,11 @@
 package com.swipedelete.core.storage
 
 import com.swipedelete.core.model.BatchId
+import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
+import kotlinx.coroutines.currentCoroutineContext
+import java.net.URLDecoder
 
 /**
  * AC-7: the outermost decorator in the frozen stack
@@ -39,12 +42,12 @@ class ProtectedRootsStorageGateway(
     fun isProtected(item: MediaItem): Boolean = protectedBy(item) != null
 
     override suspend fun move(item: MediaItem, destination: Destination): MoveResult {
-        if (isProtected(item)) return MoveResult.Failed(REASON)
+        if (protectedBy(item, reviewedItems()) != null) return MoveResult.Failed(REASON)
         return delegate.move(item, destination)
     }
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
-        val (allowed, refused) = split(items)
+        val (allowed, refused) = split(items, reviewedItems())
         if (allowed.isEmpty()) return QuarantineResult.Partial(emptyList(), refused)
 
         return when (val result = delegate.quarantine(allowed, batch)) {
@@ -86,18 +89,30 @@ class ProtectedRootsStorageGateway(
 
     // --- Internals ---
 
-    private fun split(items: List<MediaItem>): Pair<List<MediaItem>, List<Failure>> {
+    /**
+     * The items the caller reviewed one at a time (see [IndividuallyReviewed]).
+     * Permanent deletion never consults this.
+     */
+    private suspend fun reviewedItems(): Set<ItemId> =
+        currentCoroutineContext()[IndividuallyReviewed]?.items ?: emptySet()
+
+    private fun split(
+        items: List<MediaItem>,
+        reviewed: Set<ItemId> = emptySet(),
+    ): Pair<List<MediaItem>, List<Failure>> {
         val allowed = ArrayList<MediaItem>(items.size)
         val refused = ArrayList<Failure>(items.size)
         items.forEach { item ->
-            val root = protectedBy(item)
+            val root = protectedBy(item, reviewed)
             if (root == null) allowed += item else refused += Failure(item.id, REASON, root.pattern)
         }
         return allowed to refused
     }
 
-    private fun protectedBy(item: MediaItem): ProtectedRoot? =
-        activePatterns().firstOrNull { matches(it, item) }
+    private fun protectedBy(item: MediaItem, reviewed: Set<ItemId> = emptySet()): ProtectedRoot? =
+        activePatterns()
+            .filter { item.id !in reviewed || it.kind in ALWAYS_ENFORCED }
+            .firstOrNull { matches(it, item) }
 
     private fun activePatterns(): List<ProtectedRoot> {
         val unlockedNow = unlocked()
@@ -133,12 +148,29 @@ class ProtectedRootsStorageGateway(
         return isMedia && now() - item.dateModified > DefaultProtectedRoots.AGE_THRESHOLD_MILLIS
     }
 
-    /** The path/relativePath strings to match against; falls back to the uri. */
+    /**
+     * The path/relativePath strings to match against; falls back to the uri. A
+     * folder-grant (SAF) item carries its location as an encoded document URI,
+     * so the decoded document path is matched too — otherwise a tree granted at
+     * `DCIM/` would hide every item under it from these rules.
+     */
     private fun MediaItem.searchPaths(): List<String> =
         listOfNotNull(path, relativePath).ifEmpty { listOf(uri) }
+            .flatMap { listOfNotNull(it, documentPath(it)) }
+
+    /** `content://…/document/primary%3ADCIM%2FCamera%2Fa.jpg` → `DCIM/Camera/a.jpg`. */
+    private fun documentPath(value: String): String? {
+        if (!value.startsWith("content://")) return null
+        val decoded = runCatching { URLDecoder.decode(value.substringAfterLast('/'), "UTF-8") }
+            .getOrNull() ?: return null
+        return decoded.substringAfter(':')
+    }
 
     companion object {
         /** Reason attached to every refusal, so the UI can explain it. */
         const val REASON: String = "protected_root"
+
+        /** The rules a reviewed item is still subject to. */
+        private val ALWAYS_ENFORCED = setOf(ProtectedRootKind.INTERNAL, ProtectedRootKind.SAF_ROOT)
     }
 }

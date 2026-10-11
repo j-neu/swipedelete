@@ -11,6 +11,7 @@ import com.swipedelete.core.model.SourceKind
 import com.swipedelete.core.model.SourceRef
 import com.swipedelete.core.storage.fake.FakeStorageGateway
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -201,6 +202,103 @@ class ProtectedRootsTest {
 
         assertEquals(delegate.sources(), gateway.sources())
         assertEquals(delegate.capacity(), gateway.capacity())
+    }
+
+    // --- Items the user reviewed one at a time (the deck) ---
+
+    @Test
+    fun `an item the user reviewed one at a time may be quarantined from a protected folder`() = runTest {
+        val reviewed = item(path = "$DCIM/Album/a.jpg")
+        val delegate = CountingGateway()
+        val gateway = ProtectedRootsStorageGateway(delegate, unlocked = { emptySet() }, now = { NOW })
+
+        val result = withContext(IndividuallyReviewed(setOf(reviewed.id))) {
+            gateway.quarantine(listOf(reviewed), BatchId("b"))
+        }
+
+        assertTrue(result is QuarantineResult.Quarantined)
+        assertEquals(listOf(reviewed.id), delegate.receivedQuarantineIds)
+    }
+
+    @Test
+    fun `the review exemption covers only the reviewed items of a batch`() = runTest {
+        val reviewed = item(path = "$DCIM/Album/a.jpg")
+        val other = item(path = "$DCIM/Album/b.jpg")
+        val delegate = CountingGateway()
+        val gateway = ProtectedRootsStorageGateway(delegate, unlocked = { emptySet() }, now = { NOW })
+
+        val result = withContext(IndividuallyReviewed(setOf(reviewed.id))) {
+            gateway.quarantine(listOf(reviewed, other), BatchId("b"))
+        }
+
+        assertTrue(result is QuarantineResult.Partial)
+        assertEquals(listOf(reviewed.id), delegate.receivedQuarantineIds)
+        assertEquals(other.id, result.failures.single().itemId)
+    }
+
+    @Test
+    fun `a reviewed item is still refused inside the quarantine directory and at a granted root`() = runTest {
+        val inQuarantine = item(path = "$QUARANTINE_ROOT/b1/a.jpg")
+        val root = item(path = "/storage/emulated/0")
+        val delegate = CountingGateway()
+        val gateway = ProtectedRootsStorageGateway(
+            delegate = delegate,
+            unlocked = { emptySet() },
+            isRoot = { it.id == root.id },
+            quarantineRoot = QUARANTINE_ROOT,
+            now = { NOW },
+        )
+
+        val result = withContext(IndividuallyReviewed(setOf(inQuarantine.id, root.id))) {
+            gateway.quarantine(listOf(inQuarantine, root), BatchId("b"))
+        }
+
+        assertTrue(result is QuarantineResult.Partial)
+        assertEquals(2, result.failures.size)
+        assertEquals(0, delegate.quarantineCalls)
+    }
+
+    @Test
+    fun `a reviewed item may be moved out of a protected folder`() = runTest {
+        val reviewed = item(path = "$DCIM/Album/a.jpg")
+
+        val result = withContext(IndividuallyReviewed(setOf(reviewed.id))) {
+            gateway.move(reviewed, destination())
+        }
+
+        assertFalse(result == MoveResult.Failed("protected_root"))
+    }
+
+    @Test
+    fun `permanent deletion is never exempt, reviewed or not`() = runTest {
+        val reviewed = item(path = "$DCIM/Album/a.jpg")
+        val delegate = CountingGateway()
+        val gateway = ProtectedRootsStorageGateway(delegate, unlocked = { emptySet() }, now = { NOW })
+
+        val result = withContext(IndividuallyReviewed(setOf(reviewed.id))) {
+            gateway.deletePermanently(listOf(reviewed))
+        }
+
+        assertTrue(result is DeleteResult.Partial)
+        assertEquals(0, delegate.deleteCalls)
+    }
+
+    // --- Folder-grant (SAF) items, whose path is an encoded document URI ---
+
+    @Test
+    fun `a folder-grant item under DCIM is recognised from its document uri`() {
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3ADCIM" +
+            "/document/primary%3ADCIM%2FAlbum%2FIMG_1.jpg"
+
+        assertTrue(gateway.isProtected(item(path = uri, relativePath = "Album/IMG_1.jpg")))
+    }
+
+    @Test
+    fun `a folder-grant item outside every protected root is not protected`() {
+        val uri = "content://com.android.externalstorage.documents/tree/primary%3AMemes" +
+            "/document/primary%3AMemes%2Fa.gif"
+
+        assertFalse(gateway.isProtected(item(path = uri, relativePath = "a.gif")))
     }
 }
 

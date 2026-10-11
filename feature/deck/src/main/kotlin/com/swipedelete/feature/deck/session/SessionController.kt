@@ -17,6 +17,7 @@ import com.swipedelete.core.model.SlotId
 import com.swipedelete.core.model.SlotMode
 import com.swipedelete.core.storage.Destination
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.DeckAction
@@ -31,6 +32,7 @@ import com.swipedelete.feature.deck.domain.SlotMoveOutcome
 import com.swipedelete.feature.deck.domain.SlotTagSink
 import com.swipedelete.feature.deck.domain.effectiveSlotMode
 import java.util.UUID
+import kotlinx.coroutines.withContext
 
 /**
  * D6: the readiness guard in front of every destructive session action.
@@ -426,7 +428,10 @@ class SessionController(
             ?.trim('/')
             ?.takeIf { it.isNotEmpty() }
         gate.await()
-        val result = gw.move(current, Destination(originSource, originDirectory))
+        // Undoing the user's own single-card move is the same kind of decision.
+        val result = withContext(IndividuallyReviewed(setOf(current.id))) {
+            gw.move(current, Destination(originSource, originDirectory))
+        }
         if (result is MoveResult.Failed) {
             throw UndoFailedException("The item could not be moved back: ${result.reason}")
         }

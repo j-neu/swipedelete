@@ -12,6 +12,7 @@ import com.swipedelete.core.model.SourceKind
 import com.swipedelete.core.model.SourceRef
 import com.swipedelete.core.model.Tag
 import com.swipedelete.core.storage.Destination
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.MoveResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.fake.FakeStorageGateway
@@ -28,6 +29,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertIs
 import kotlin.test.assertTrue
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -45,8 +47,14 @@ class SessionSlotMoveTest {
 
     /** The fake gateway, with a switch that makes every move fail. */
     private var failMoves = false
+    private val reviewedDuringMoves = mutableListOf<Set<ItemId>?>()
     private val gateway: StorageGateway = object : StorageGateway by fake {
-        override suspend fun move(item: MediaItem, destination: Destination): MoveResult =
+        override suspend fun move(item: MediaItem, destination: Destination): MoveResult {
+            reviewedDuringMoves += currentCoroutineContext()[IndividuallyReviewed]?.items
+            return moveOrFail(item, destination)
+        }
+
+        private suspend fun moveOrFail(item: MediaItem, destination: Destination): MoveResult =
             if (failMoves) MoveResult.Failed("destination is read-only") else fake.move(item, destination)
     }
 
@@ -102,6 +110,17 @@ class SessionSlotMoveTest {
 
         assertEquals(listOf(ItemId("i1") to SlotId(2)), tags.untagged)
         assertEquals(ItemId("i1"), controller.currentId())
+    }
+
+    @Test
+    fun `a slot move and its undo are marked as reviewed one item at a time`() = runTest {
+        val controller = controller()
+        controller.applySlotMove(moveSlot, items[0])
+        controller.undoLast()
+
+        assertEquals(2, reviewedDuringMoves.size)
+        assertEquals(setOf(ItemId("i1")), reviewedDuringMoves[0])
+        assertEquals(1, reviewedDuringMoves[1]?.size, "the move back carries the moved item, and only it")
     }
 
     @Test

@@ -1,8 +1,10 @@
 package com.swipedelete.feature.deck.session
 
 import com.swipedelete.core.model.BatchId
+import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.Metadata
 import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.StorageGateway
@@ -15,6 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.test.runTest
 
 /**
@@ -92,5 +95,21 @@ class GatewaySessionMutationsTest {
 
         assertTrue(outcome.moved.isEmpty())
         assertEquals(listOf(Failure(a.id, "insufficient_space")), outcome.failures)
+    }
+
+    @Test
+    fun `a deck quarantine tells the gateway exactly which items the user reviewed`() = runTest {
+        val a = item(size = 100L)
+        var reviewed: Set<ItemId>? = null
+        val observing = object : StorageGateway by gateway {
+            override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineResult {
+                reviewed = currentCoroutineContext()[IndividuallyReviewed]?.items
+                return QuarantineResult.Partial(emptyList(), emptyList())
+            }
+        }
+
+        GatewaySessionMutations(observing).quarantine(listOf(a), BatchId("b"))
+
+        assertEquals(setOf(a.id), reviewed)
     }
 }

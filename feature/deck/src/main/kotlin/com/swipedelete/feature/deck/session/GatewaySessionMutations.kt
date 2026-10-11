@@ -5,10 +5,12 @@ import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.storage.Failure
+import com.swipedelete.core.storage.IndividuallyReviewed
 import com.swipedelete.core.storage.QuarantineResult
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.feature.deck.domain.staleReason as staleReasonFor
+import kotlinx.coroutines.withContext
 
 /**
  * The production [SessionMutations] over the journaled [StorageGateway].
@@ -26,11 +28,20 @@ class GatewaySessionMutations(
 ) : SessionMutations {
 
     override suspend fun quarantine(items: List<MediaItem>, batch: BatchId): QuarantineOutcome =
-        when (val result = gateway.quarantine(items, batch)) {
+        when (val result = quarantineReviewed(items, batch)) {
             is QuarantineResult.Quarantined -> QuarantineOutcome(result.entries.movedIds(), emptyList(), result.entries)
             is QuarantineResult.Partial -> QuarantineOutcome(result.entries.movedIds(), result.failures, result.entries)
             is QuarantineResult.InsufficientSpace ->
                 QuarantineOutcome(emptySet(), items.map { Failure(it.id, INSUFFICIENT_SPACE) })
+        }
+
+    /**
+     * Every item here was staged by the user one card at a time and confirmed in
+     * the Apply preview, which is what [IndividuallyReviewed] asserts (AC-7).
+     */
+    private suspend fun quarantineReviewed(items: List<MediaItem>, batch: BatchId): QuarantineResult =
+        withContext(IndividuallyReviewed(items.mapTo(linkedSetOf()) { it.id })) {
+            gateway.quarantine(items, batch)
         }
 
     private fun List<JournalEntry>.movedIds(): Set<ItemId> = mapTo(linkedSetOf()) { it.itemId }
