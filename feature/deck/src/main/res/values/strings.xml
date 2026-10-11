@@ -25,6 +25,8 @@
     <string name="deck_reason_protected">in a protected folder</string>
     <string name="deck_reason_space">not enough free space to keep a recoverable copy</string>
     <string name="deck_reason_delete_refused">Android did not let this app remove the original</string>
+    <string name="deck_error">That did not work: %1$s</string>
+    <string name="deck_finish">Finish session</string>
     <string name="deck_move_unavailable">That slot destination is no longer available</string>
     <string name="deck_empty">No sources to review yet</string>
     <string name="deck_dismiss">Dismiss</string>

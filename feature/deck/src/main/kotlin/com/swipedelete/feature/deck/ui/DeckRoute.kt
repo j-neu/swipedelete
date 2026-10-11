@@ -33,6 +33,9 @@ const val DeckPartialBannerTestTag: String = "deck_partial_banner"
 /** AC-8: the banner that names the items an Apply refused because they changed. */
 const val DeckStaleAbortBannerTestTag: String = "deck_stale_abort_banner"
 
+/** The banner for a deck action that failed outright. */
+const val DeckErrorBannerTestTag: String = "deck_error_banner"
+
 /** The banner that names the items an Apply could not move, and why. */
 const val DeckApplyFailedBannerTestTag: String = "deck_apply_failed_banner"
 
@@ -67,6 +70,8 @@ fun DeckRoute(
         onRestore = viewModel::restoreEverything,
         onDismissAborts = viewModel::dismissAborts,
         onDismissFailures = viewModel::dismissFailures,
+        onDismissError = viewModel::dismissError,
+        onDismissMoveUnavailable = viewModel::dismissMoveUnavailable,
         modifier = modifier,
         topContent = topContent,
     )
@@ -91,6 +96,8 @@ fun DeckRouteContent(
     onRestore: () -> Unit,
     onDismissAborts: () -> Unit = {},
     onDismissFailures: () -> Unit = {},
+    onDismissError: () -> Unit = {},
+    onDismissMoveUnavailable: () -> Unit = {},
     modifier: Modifier = Modifier,
     topContent: @Composable () -> Unit = {},
 ) {
@@ -106,8 +113,19 @@ fun DeckRouteContent(
             )
         }
 
+        state.error?.let { error ->
+            NoticeBanner(
+                text = stringResource(R.string.deck_error, error),
+                tag = DeckErrorBannerTestTag,
+                onDismiss = onDismissError,
+            )
+        }
+
         if (state.moveUnavailable) {
-            NoticeBanner(text = stringResource(R.string.deck_move_unavailable))
+            NoticeBanner(
+                text = stringResource(R.string.deck_move_unavailable),
+                onDismiss = onDismissMoveUnavailable,
+            )
         }
 
         if (state.aborted.isNotEmpty()) {
@@ -160,7 +178,19 @@ fun DeckRouteContent(
                 }
                 HistoryStrip(history = state.deck.history, onRevert = onRevert)
                 if (dockRevealed) {
-                    DeckSlotDock(slots = state.slots, onSlotSelected = onSlotSelected)
+                    DeckSlotDock(
+                        slots = state.slots,
+                        onSlotSelected = { slot ->
+                            dockRevealed = false
+                            onSlotSelected(slot)
+                        },
+                    )
+                }
+                // The only route to the summary, the exit prompt and restore-everything.
+                if (state.hasSource) {
+                    TextButton(onClick = onFinish) {
+                        Text(text = stringResource(R.string.deck_finish))
+                    }
                 }
             },
         )

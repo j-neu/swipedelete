@@ -4,7 +4,11 @@ import com.swipedelete.core.database.dao.SlotDao
 import com.swipedelete.core.database.entity.SlotEntity
 import com.swipedelete.core.model.ItemId
 import com.swipedelete.core.model.MediaItem
+import com.swipedelete.core.model.SourceRef
+import com.swipedelete.core.storage.PageToken
 import com.swipedelete.core.storage.fake.FakeStorageGateway
+import com.swipedelete.core.storage.scan.ScanPage
+import com.swipedelete.core.storage.scan.SourceScanPort
 import com.swipedelete.feature.deck.domain.DeckBuilder
 import com.swipedelete.feature.deck.domain.FakeScanPort
 import com.swipedelete.feature.deck.domain.FixedClock
@@ -25,6 +29,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
@@ -62,9 +67,10 @@ class DeckViewModelTest {
     private fun viewModel(
         truncated: Boolean = false,
         mutations: SessionMutations = RecordingMutations(),
+        scanPort: SourceScanPort = FakeScanPort(page(items, truncated = truncated)),
     ) = DeckViewModel(
         builder = DeckBuilder(
-            scanner = { FakeScanPort(page(items, truncated = truncated)) },
+            scanner = { scanPort },
             gateway = gateway,
             clock = FixedClock(0L),
         ),
@@ -141,6 +147,36 @@ class DeckViewModelTest {
         assertEquals(listOf(ItemId("i1")), vm.state.value.failed.map { it.item.id })
         assertEquals("protected_root", vm.state.value.failed.single().reason)
         assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id }, "a refused item stays staged")
+    }
+
+    @Test
+    fun `a source that cannot be scanned shows an error instead of crashing`() {
+        val revoked = object : SourceScanPort {
+            override fun scan(source: SourceRef, page: PageToken?): Flow<ScanPage> =
+                flow { throw SecurityException("grant revoked") }
+        }
+
+        val vm = viewModel(scanPort = revoked)
+
+        assertEquals(false, vm.state.value.loading)
+        assertEquals("grant revoked", vm.state.value.error)
+    }
+
+    @Test
+    fun `an Apply that throws reports the error and keeps the item staged`() {
+        val failing = object : SessionMutations {
+            override suspend fun quarantine(items: List<MediaItem>, batch: com.swipedelete.core.model.BatchId) =
+                throw IllegalStateException("journal unavailable")
+
+            override suspend fun restoreSession(session: com.swipedelete.core.model.SessionId): Int = 0
+        }
+        val vm = viewModel(mutations = failing)
+
+        vm.decide(Gesture.DELETE)
+        vm.applyStaged()
+
+        assertEquals("journal unavailable", vm.state.value.error)
+        assertEquals(listOf(ItemId("i1")), vm.state.value.staged.map { it.id })
     }
 
     private class FakeSlotDao : SlotDao {

@@ -25,6 +25,7 @@ import com.swipedelete.feature.deck.session.StaleAbort
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.io.InputStream
 import javax.inject.Inject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,6 +56,8 @@ data class DeckUiState(
     val summary: SessionSummary? = null,
     /** True after a drop on a slot whose destination grant is gone. */
     val moveUnavailable: Boolean = false,
+    /** The last failure of a deck action, shown to the user rather than swallowed. */
+    val error: String? = null,
 )
 
 /**
@@ -95,7 +98,7 @@ class DeckViewModel @Inject constructor(
     val state: StateFlow<DeckUiState> = _state.asStateFlow()
 
     init {
-        viewModelScope.launch { startDefaultDeck() }
+        act { startDefaultDeck() }
     }
 
     /** Builds a deck for the first available source, or shows the empty deck. */
@@ -108,11 +111,11 @@ class DeckViewModel @Inject constructor(
         refresh(controller.start(DeckQuery.Folder(source.id)))
     }
 
-    fun decide(gesture: Gesture) = viewModelScope.launch { refresh(controller.decide(gesture)) }
+    fun decide(gesture: Gesture) = act { refresh(controller.decide(gesture)) }
 
-    fun onSlotSelected(dock: DockSlot) = viewModelScope.launch {
-        val item = _state.value.current ?: return@launch
-        val slot = slotModels[dock.id] ?: return@launch
+    fun onSlotSelected(dock: DockSlot) = act {
+        val item = _state.value.current ?: return@act
+        val slot = slotModels[dock.id] ?: return@act
         when (controller.applySlotMove(slot, item)) {
             is SlotMoveOutcome.DestinationUnavailable ->
                 _state.update { it.copy(moveUnavailable = true) }
@@ -121,29 +124,31 @@ class DeckViewModel @Inject constructor(
         refresh()
     }
 
-    fun applyStaged() = viewModelScope.launch {
+    fun applyStaged() = act {
         val result = controller.applyStaged()
         _state.update { it.copy(aborted = result.aborted, failed = result.failed) }
         refresh()
     }
 
-    fun discardStaging() = viewModelScope.launch { refresh(controller.discardStaging()) }
+    fun discardStaging() = act { refresh(controller.discardStaging()) }
 
-    fun keepStaged() = viewModelScope.launch { refresh(controller.keepStaged()) }
+    fun keepStaged() = act { refresh(controller.keepStaged()) }
 
-    fun revert(index: Int) = viewModelScope.launch { refresh(controller.revert(index)) }
+    fun revert(index: Int) = act { refresh(controller.revert(index)) }
 
-    fun undoLast() = viewModelScope.launch { refresh(controller.undoLast()) }
+    fun undoLast() = act { refresh(controller.undoLast()) }
 
-    fun finish() = viewModelScope.launch {
+    fun finish() = act {
         controller.finish(DeckStatus.COMPLETED)
         refresh()
     }
 
-    fun restoreEverything() = viewModelScope.launch {
+    fun restoreEverything() = act {
         controller.restoreEverything()
         refresh()
     }
+
+    fun dismissError() = _state.update { it.copy(error = null) }
 
     fun dismissMoveUnavailable() = _state.update { it.copy(moveUnavailable = false) }
 
@@ -155,6 +160,23 @@ class DeckViewModel @Inject constructor(
     fun openStream(item: MediaItem): InputStream = gateway.openStream(item)
 
     fun item(id: ItemId): MediaItem? = _state.value.items.firstOrNull { it.id == id }
+
+    /**
+     * Runs one deck action. A failure (a revoked grant, an unreadable journal) is
+     * reported in [DeckUiState.error] instead of crashing the app, and the deck
+     * is left as it was.
+     */
+    private fun act(block: suspend () -> Unit) = viewModelScope.launch {
+        try {
+            block()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            _state.update {
+                it.copy(loading = false, error = failure.message ?: failure::class.simpleName)
+            }
+        }
+    }
 
     private suspend fun refresh(state: DeckState = controller.currentState()) {
         val items = controller.snapshotItems()

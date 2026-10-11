@@ -38,8 +38,13 @@ class DeckRouteCompositionTest {
     private val stagedItem = mediaItem("i2", "content://tree/src/i2.jpg")
     private var opened: ItemId? = null
     private var applied = false
+    private var finished = false
 
-    private fun show(partial: Boolean = false, failed: List<ApplyFailure> = emptyList()) {
+    private fun show(
+        partial: Boolean = false,
+        failed: List<ApplyFailure> = emptyList(),
+        error: String? = null,
+    ) {
         composeTestRule.setContent {
             SwipeDeleteTheme {
                 DeckRouteContent(
@@ -54,6 +59,7 @@ class DeckRouteCompositionTest {
                         partialDeck = partial,
                         scanned = 42,
                         failed = failed,
+                        error = error,
                     ),
                     onDecision = {},
                     onOpen = { opened = it },
@@ -63,7 +69,7 @@ class DeckRouteCompositionTest {
                     onKeep = {},
                     onUndoLast = {},
                     onRevert = {},
-                    onFinish = {},
+                    onFinish = { finished = true },
                     onRestore = {},
                 )
             }
@@ -122,5 +128,22 @@ class DeckRouteCompositionTest {
 
         composeTestRule.onNodeWithTag(DeckApplyFailedBannerTestTag).assertExists()
         composeTestRule.onNodeWithText("protected folder", substring = true).assertExists()
+    }
+
+    @Test
+    fun `the session can be finished from the deck`() {
+        show()
+
+        composeTestRule.onNodeWithText("Finish session").performClick()
+
+        assertEquals(true, finished, "without this the summary screen is unreachable")
+    }
+
+    @Test
+    fun `an error is shown, not swallowed`() {
+        show(error = "grant revoked")
+
+        composeTestRule.onNodeWithTag(DeckErrorBannerTestTag).assertExists()
+        composeTestRule.onNodeWithText("grant revoked", substring = true).assertExists()
     }
 }
