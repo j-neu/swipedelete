@@ -29,7 +29,7 @@ This record supersedes the 2026-10-03 version, which predated the whole-branch r
 
 - Debug build only; a release-like build was not measured (expected to be faster, not verified).
 - 93.3% of frames fit the 60 fps budget and the median is 10.2 ms; "at >= 60 fps" is read as smooth in practice, not every frame. One device (API 33) plus the API 36 emulator.
-- Carried forward: session-restore entries are in memory only; MediaStore rows are review-only; CI `ci.yml` is malformed.
+- Carried forward: session-restore entries are in memory only; MediaStore rows are review-only; CI has never run on GitHub (no remote yet), but its exact command passes locally.
 
 ## Update — M1-T18 restore and thumbnails (2026-10-11, branch `m1-t18-saf-restore`)
 
@@ -220,7 +220,7 @@ Every `DeckViewModel` action is a bare `viewModelScope.launch`. `controller.star
 - **AC-8 and AC-15** are covered by unit tests and the contract suite, not by a device scenario through the UI.
 - **Multi-API gap unchanged.** Only API 36 has run; API 26/30/33 images are unavailable.
 - **AC-5 on-device gap unchanged.** An OS-level process kill is covered only by the host sweep.
-- **CI has never run.** The `packages:` block in `ci.yml` is malformed and must be fixed before the first run (see the SDD ledger).
+- **CI has never run on GitHub (no remote yet).** The `packages:` line is already fixed to a single line, and `./gradlew :app:assembleDebug testDebugUnitTest lintDebug` passes locally (2026-10-11).
 - **V6–V9 remain deferred** to M2/M3/M4.
 
 ## What acceptance needs
