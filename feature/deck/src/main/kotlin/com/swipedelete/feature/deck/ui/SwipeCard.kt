@@ -179,7 +179,7 @@ fun SwipeCard(
     Surface(
         modifier = modifier
             .offset { IntOffset(dragOffset.x.roundToInt(), dragOffset.y.roundToInt()) }
-            .clickable(onClick = onOpen)
+            .clickable(interactionSource = null, indication = null, onClick = onOpen)
             .semantics {
                 customActions = listOf(
                     CustomAccessibilityAction(deleteLabel) { onDecision(Gesture.DELETE); true },
