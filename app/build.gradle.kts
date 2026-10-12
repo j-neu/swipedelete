@@ -126,3 +126,14 @@ dependencies {
     // is not transitive.
     androidTestImplementation(libs.room.runtime)
 }
+
+// The arch/ scope tests read every module's production sources at run time.
+// Declaring them as inputs keeps Gradle from replaying a cached pass after a
+// source change elsewhere.
+tasks.withType<Test>().configureEach {
+    inputs.files(
+        fileTree(rootDir) {
+            include("core/*/src/main/**/*.kt", "feature/*/src/main/**/*.kt", "app/src/main/**/*.kt")
+        },
+    ).withPropertyName("productionSources").withPathSensitivity(PathSensitivity.RELATIVE)
+}
