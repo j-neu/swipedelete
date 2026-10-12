@@ -143,6 +143,27 @@ class M2QuarantineEmptyTest {
         assertEquals(0, admin.contents().size)
     }
 
+    @Test
+    fun exportOfTheRealRoomJournalHasEveryRow() = runBlocking<Unit> {
+        val journal = db.journalDao()
+        val now = System.currentTimeMillis()
+        repeat(450) { n ->
+            journal.insertPending(
+                com.swipedelete.core.database.entity.JournalEntryEntity(
+                    id = "e$n", batchId = "b${n % 9}", itemId = "i$n", opKind = OpKind.QUARANTINE, fromUri = "Fotos/a, \"$n\".jpg",
+                    sizeBytes = n.toLong(), state = JournalState.PENDING, createdAt = now + n, expiresAt = now + n + 1,
+                ),
+            )
+        }
+        val out = java.io.ByteArrayOutputStream()
+
+        val written = com.swipedelete.core.storage.export.JournalExporter(journal).exportCsv(out)
+
+        assertEquals(450, written)
+        val lines = out.toString(Charsets.UTF_8).trimEnd().lines()
+        assertEquals("header plus every row", 451, lines.size)
+    }
+
     private companion object {
         const val DB = "m2-empty-test.db"
     }
