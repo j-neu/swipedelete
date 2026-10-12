@@ -17,6 +17,7 @@ import com.swipedelete.core.model.JournalState
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.model.OpKind
 import com.swipedelete.core.storage.QuarantineResult
+import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.quarantine.EmptyOutcome
 import com.swipedelete.core.storage.quarantine.QuarantineAdmin
 import com.swipedelete.core.storage.raw.RawStorageGateway
@@ -102,6 +103,44 @@ class M2QuarantineEmptyTest {
         val purge = db.journalDao().page(100, 0).filter { it.opKind == OpKind.DELETE_PERMANENT }
         assertEquals(3, purge.size)
         assertTrue(purge.all { it.state == JournalState.DONE })
+    }
+
+    @Test
+    fun historyRestoreIsByteIdenticalAndNeverOverwritesAnOccupant() = runBlocking<Unit> {
+        val source = File(runRoot, "source")
+        val raw = RawStorageGateway(roots = listOf(source), hasAllFilesAccess = true)
+        val graph = assembleStorageGraph(
+            concrete = raw, journal = db.journalDao(), quarantineRoot = File(runRoot, "quarantine"),
+            hasher = Sha256Hasher(), clock = clock, exists = { File(it).exists() },
+        )
+        val sourceId = raw.sources().single().id
+        val bytes = Random(7).nextBytes(1024 * 1024)
+        val files = listOf("a.bin", "b.bin").map { File(source, it).also { f -> f.writeBytes(bytes) } }
+        val items = files.map { f ->
+            MediaItem(
+                id = ItemId("${sourceId.value}:${f.name}"), uri = f.absolutePath, path = f.absolutePath,
+                relativePath = f.name, mediaStoreId = null, mime = "application/octet-stream",
+                sizeBytes = f.length(), width = null, height = null, durationMs = null, dateAdded = 0L,
+                dateModified = f.lastModified(), bucket = null, sourceId = sourceId,
+            )
+        }
+        assertTrue(graph.gateway.quarantine(items, BatchId("m2h")) is QuarantineResult.Quarantined)
+        val admin = QuarantineAdmin(graph.quarantineStore, graph.gateway, db.journalDao(), clock)
+        File(source, "b.bin").writeBytes("occupant".toByteArray())
+
+        val byName = admin.history().filter { it.held != null }.associateBy { File(it.row.fromUri).name }
+        val restoredA = admin.restore(byName.getValue("a.bin"))
+        val clash = admin.restore(byName.getValue("b.bin"))
+        val both = admin.restore(admin.history().first { it.held != null }, keepBoth = true)
+
+        assertTrue("a: $restoredA", restoredA is RestoreResult.Restored)
+        assertTrue(bytes.contentEquals(File(source, "a.bin").readBytes()))
+        assertTrue("b clash: $clash", clash is RestoreResult.Conflict)
+        assertEquals("occupant", File(source, "b.bin").readText())
+        assertTrue("keep both: $both", both is RestoreResult.Restored)
+        assertEquals("occupant", File(source, "b.bin").readText())
+        assertTrue(bytes.contentEquals(File((both as RestoreResult.Restored).to).readBytes()))
+        assertEquals(0, admin.contents().size)
     }
 
     private companion object {
