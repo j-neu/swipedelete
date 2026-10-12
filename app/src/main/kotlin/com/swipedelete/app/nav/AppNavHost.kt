@@ -2,6 +2,7 @@ package com.swipedelete.app.nav
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -17,6 +18,7 @@ import com.swipedelete.app.R
 import com.swipedelete.app.permissions.WholeLibraryAffordance
 import com.swipedelete.app.permissions.rememberCapabilityRequester
 import com.swipedelete.app.permissions.rememberTieredFeatureGate
+import com.swipedelete.feature.dashboard.overview.DashboardRoute
 import com.swipedelete.feature.dashboard.history.HistoryRoute
 import com.swipedelete.feature.dashboard.quarantine.QuarantineRoute
 import com.swipedelete.feature.deck.ui.DeckRoute
@@ -45,6 +47,9 @@ fun AppNavHost(
         DeckRoute(
             onOpenItem = { itemId -> navController.navigate(Destinations.viewer(itemId.value)) },
             topContent = {
+                OutlinedButton(onClick = { navController.navigate(Destinations.DASHBOARD) }) {
+                    Text(stringResource(R.string.nav_dashboard))
+                }
                 WholeLibraryAffordance(
                     controller = rememberCapabilityRequester(),
                     gate = rememberTieredFeatureGate(),
@@ -70,7 +75,11 @@ fun AppNavHost(
             viewerScreen(entry.arguments?.getString(Destinations.ITEM_ID_ARG).orEmpty())
         }
         composable(Destinations.DASHBOARD) {
-            PlaceholderScreen(title = stringResource(R.string.nav_dashboard))
+            DashboardRoute(
+                onOpenQuarantine = { navController.navigate(Destinations.QUARANTINE) },
+                onOpenHistory = { navController.navigate(Destinations.HISTORY) },
+                onAddFolder = { navController.navigate(Destinations.SETTINGS) },
+            )
         }
         composable(Destinations.QUARANTINE) {
             QuarantineRoute()

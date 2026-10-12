@@ -9,6 +9,7 @@ import com.swipedelete.core.database.dao.JournalDao
 import com.swipedelete.core.storage.export.JournalExporter
 import com.swipedelete.feature.dashboard.history.ExportFormat
 import com.swipedelete.feature.dashboard.history.ExportOutcome
+import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.quarantine.HistoryStatus as CoreStatus
 import com.swipedelete.core.storage.quarantine.EmptyOutcome
@@ -17,6 +18,9 @@ import com.swipedelete.feature.dashboard.history.HistoryPort
 import com.swipedelete.feature.dashboard.history.HistoryRow
 import com.swipedelete.feature.dashboard.history.HistoryRowStatus
 import com.swipedelete.feature.dashboard.history.RestoreOutcome
+import com.swipedelete.feature.dashboard.overview.CapacityInfo
+import com.swipedelete.feature.dashboard.overview.OverviewItem
+import com.swipedelete.feature.dashboard.overview.OverviewPort
 import com.swipedelete.feature.dashboard.quarantine.HeldItem
 import com.swipedelete.feature.dashboard.quarantine.QuarantinePort
 import dagger.Module
@@ -121,6 +125,31 @@ object DashboardModule {
                 }
             }
         }
+    }
+
+    @Provides
+    @Singleton
+    fun provideOverviewPort(gateway: StorageGateway): OverviewPort = object : OverviewPort {
+        override suspend fun items(): List<OverviewItem> = withContext(Dispatchers.IO) {
+            val found = ArrayList<OverviewItem>()
+            gateway.sources().forEach { source ->
+                gateway.enumerate(source, null).collect { page ->
+                    page.items.forEach { m ->
+                        found += OverviewItem(
+                            id = m.id.value,
+                            name = m.relativePath?.substringAfterLast('/') ?: m.uri.substringAfterLast('/'),
+                            folder = m.relativePath?.substringBeforeLast('/', "")?.ifEmpty { null } ?: m.bucket ?: "(top level)",
+                            mime = m.mime,
+                            sizeBytes = m.sizeBytes,
+                        )
+                    }
+                }
+            }
+            found
+        }
+
+        override suspend fun capacity(): CapacityInfo =
+            gateway.capacity().let { CapacityInfo(it.totalBytes, it.freeBytes, it.reclaimableBytes) }
     }
 
     @Provides
