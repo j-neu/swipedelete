@@ -53,6 +53,14 @@ class HistoryController(private val port: HistoryPort) {
         }
     }
 
+    suspend fun export(uri: String, format: ExportFormat) {
+        val message = when (val outcome = port.export(uri, format)) {
+            is ExportOutcome.Exported -> "Exported ${outcome.rows} journal rows"
+            is ExportOutcome.Failed -> "Export failed: ${outcome.reason}. No file was kept."
+        }
+        _state.value = _state.value.copy(message = message)
+    }
+
     fun skipConflict() {
         _state.value = _state.value.copy(conflict = null)
     }

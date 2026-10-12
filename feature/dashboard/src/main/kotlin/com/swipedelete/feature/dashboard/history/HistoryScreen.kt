@@ -1,5 +1,7 @@
 package com.swipedelete.feature.dashboard.history
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -24,7 +26,21 @@ import java.util.Date
 @Composable
 fun HistoryRoute(modifier: Modifier = Modifier, viewModel: HistoryViewModel = hiltViewModel()) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    HistoryScreen(state, viewModel::restore, viewModel::keepBoth, viewModel::skip, modifier)
+    val json = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        uri?.let { viewModel.export(it.toString(), ExportFormat.Json) }
+    }
+    val csv = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
+        uri?.let { viewModel.export(it.toString(), ExportFormat.Csv) }
+    }
+    HistoryScreen(
+        state = state,
+        onRestore = viewModel::restore,
+        onKeepBoth = viewModel::keepBoth,
+        onSkip = viewModel::skip,
+        onExportJson = { json.launch("swipedelete-journal.json") },
+        onExportCsv = { csv.launch("swipedelete-journal.csv") },
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -33,10 +49,18 @@ fun HistoryScreen(
     onRestore: (String) -> Unit,
     onKeepBoth: () -> Unit,
     onSkip: () -> Unit,
+    onExportJson: () -> Unit = {},
+    onExportCsv: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     LazyColumn(modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item { Text("History", style = MaterialTheme.typography.titleLarge) }
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = onExportJson) { Text("Export JSON") }
+                OutlinedButton(onClick = onExportCsv) { Text("Export CSV") }
+            }
+        }
         state.message?.let { item { Text(it) } }
         if (state.batches.isEmpty()) item { Text("Nothing has been deleted yet.") }
         state.batches.forEach { batch ->

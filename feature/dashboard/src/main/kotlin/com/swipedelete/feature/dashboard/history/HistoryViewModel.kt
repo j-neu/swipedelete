@@ -20,4 +20,5 @@ class HistoryViewModel @Inject constructor(port: HistoryPort) : ViewModel() {
     fun restore(rowId: String) = viewModelScope.launch { controller.restore(rowId) }
     fun keepBoth() = viewModelScope.launch { controller.keepBoth() }
     fun skip() = controller.skipConflict()
+    fun export(uri: String, format: ExportFormat) = viewModelScope.launch { controller.export(uri, format) }
 }

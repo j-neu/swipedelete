@@ -1,8 +1,14 @@
 package com.swipedelete.app.di
 
 import android.content.Context
+import android.net.Uri
 import android.os.StatFs
+import android.provider.DocumentsContract
 import com.swipedelete.core.common.UsableBytesSampler
+import com.swipedelete.core.database.dao.JournalDao
+import com.swipedelete.core.storage.export.JournalExporter
+import com.swipedelete.feature.dashboard.history.ExportFormat
+import com.swipedelete.feature.dashboard.history.ExportOutcome
 import com.swipedelete.core.storage.RestoreResult
 import com.swipedelete.core.storage.quarantine.HistoryStatus as CoreStatus
 import com.swipedelete.core.storage.quarantine.EmptyOutcome
@@ -19,6 +25,8 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import javax.inject.Singleton
 
 /**
@@ -48,7 +56,41 @@ object DashboardModule {
     /** OS-reported usable bytes of the volume the quarantine lives on (AC-9). */
     @Provides
     @Singleton
-    fun provideHistoryPort(admin: QuarantineAdmin): HistoryPort = object : HistoryPort {
+    fun provideHistoryPort(
+        admin: QuarantineAdmin,
+        journal: JournalDao,
+        @ApplicationContext context: Context,
+    ): HistoryPort = object : HistoryPort {
+        override suspend fun export(uri: String, format: ExportFormat): ExportOutcome {
+            val target = Uri.parse(uri)
+            return try {
+                val exporter = JournalExporter(journal)
+                val rows = withContext(Dispatchers.IO) {
+                    val stream = context.contentResolver.openOutputStream(target, "wt")
+                        ?: throw java.io.IOException("could not open the document")
+                    stream.use {
+                        when (format) {
+                            ExportFormat.Json -> exporter.exportJson(it)
+                            ExportFormat.Csv -> exporter.exportCsv(it)
+                        }
+                    }
+                }
+                ExportOutcome.Exported(rows)
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                discard(target)
+                throw cancelled
+            } catch (error: Exception) {
+                discard(target)
+                ExportOutcome.Failed(error.message ?: error::class.java.simpleName)
+            }
+        }
+
+        /** A failed export leaves no partial document behind. */
+        private fun discard(target: Uri) {
+            runCatching { DocumentsContract.deleteDocument(context.contentResolver, target) }
+        }
+
+
         override suspend fun rows(): List<HistoryRow> = admin.history().map { item ->
             HistoryRow(
                 id = item.row.id,
