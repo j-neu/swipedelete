@@ -17,6 +17,7 @@ import com.swipedelete.app.R
 import com.swipedelete.app.permissions.WholeLibraryAffordance
 import com.swipedelete.app.permissions.rememberCapabilityRequester
 import com.swipedelete.app.permissions.rememberTieredFeatureGate
+import com.swipedelete.feature.dashboard.quarantine.QuarantineRoute
 import com.swipedelete.feature.deck.ui.DeckRoute
 import com.swipedelete.feature.settings.grants.GrantsRoute
 import com.swipedelete.feature.settings.onboarding.OnboardingRoute
@@ -71,7 +72,7 @@ fun AppNavHost(
             PlaceholderScreen(title = stringResource(R.string.nav_dashboard))
         }
         composable(Destinations.QUARANTINE) {
-            PlaceholderScreen(title = stringResource(R.string.nav_quarantine))
+            QuarantineRoute()
         }
         composable(Destinations.HISTORY) {
             PlaceholderScreen(title = stringResource(R.string.nav_history))

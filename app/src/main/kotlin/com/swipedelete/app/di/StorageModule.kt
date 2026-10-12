@@ -1,6 +1,7 @@
 package com.swipedelete.app.di
 
 import android.content.Context
+import com.swipedelete.app.recovery.RecoveryCoordinator
 import com.swipedelete.core.common.Clock
 import com.swipedelete.core.common.Hasher
 import com.swipedelete.core.common.Sha256Hasher
@@ -12,6 +13,7 @@ import com.swipedelete.core.storage.QuarantineStorageGateway
 import com.swipedelete.core.storage.Reconciler
 import com.swipedelete.core.storage.StorageGateway
 import com.swipedelete.core.storage.mediastore.MediaStoreStorageGateway
+import com.swipedelete.core.storage.quarantine.QuarantineAdmin
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import com.swipedelete.core.storage.routing.SourceRoutingStorageGateway
 import com.swipedelete.core.storage.saf.PersistedGrantStore
@@ -164,7 +166,15 @@ class StorageGraphHandle internal constructor(
      * (e.g. a future MediaStore-only build). Never a mutating capability.
      */
     val scanPort: SourceScanPort?,
-)
+    private val adminFactory: (gate: suspend () -> Unit) -> QuarantineAdmin,
+) {
+    /**
+     * The dashboard's only door into quarantine (list, restore all, empty). The
+     * caller must supply the startup-recovery gate, so an ungated admin cannot
+     * be obtained from the handle.
+     */
+    fun quarantineAdmin(gate: suspend () -> Unit): QuarantineAdmin = adminFactory(gate)
+}
 
 @Module
 @InstallIn(SingletonComponent::class)
@@ -290,8 +300,22 @@ object StorageModule {
             // only its read-only scan capability is handed out. `as?` keeps the
             // handle honest for a future concrete gateway that cannot scan.
             scanPort = concrete as? SourceScanPort,
+            adminFactory = { gate ->
+                QuarantineAdmin(
+                    store = graph.quarantineStore,
+                    gateway = graph.gateway,
+                    journal = journal,
+                    clock = clock,
+                    gate = gate,
+                )
+            },
         )
     }
+
+    @Provides
+    @Singleton
+    fun provideQuarantineAdmin(handle: StorageGraphHandle, recovery: RecoveryCoordinator): QuarantineAdmin =
+        handle.quarantineAdmin { recovery.awaitReady() }
 
     @Provides
     @Singleton
