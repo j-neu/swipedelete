@@ -35,6 +35,16 @@ sealed interface RestoreOutcome {
 interface HistoryPort {
     suspend fun rows(): List<HistoryRow>
     suspend fun restore(rowId: String, keepBoth: Boolean): RestoreOutcome
+
+    /** Writes the whole journal to the document at [uri] (AC-18). */
+    suspend fun export(uri: String, format: ExportFormat): ExportOutcome
+}
+
+enum class ExportFormat { Json, Csv }
+
+sealed interface ExportOutcome {
+    data class Exported(val rows: Int) : ExportOutcome
+    data class Failed(val reason: String) : ExportOutcome
 }
 
 fun historyBatches(rows: List<HistoryRow>): List<HistoryBatch> =

@@ -18,6 +18,12 @@ class HistoryControllerTest {
             calls += rowId to keepBoth
             return outcome(rowId, keepBoth)
         }
+        var exportOutcome: ExportOutcome = ExportOutcome.Exported(0)
+        val exports = mutableListOf<Pair<String, ExportFormat>>()
+        override suspend fun export(uri: String, format: ExportFormat): ExportOutcome {
+            exports += uri to format
+            return exportOutcome
+        }
     }
 
     @Test
@@ -100,6 +106,28 @@ class HistoryControllerTest {
 
         assertEquals(listOf("a" to false, "a" to true), port.calls)
         assertNull(c.state.value.conflict)
+    }
+
+    @Test
+    fun `export reports the row count it wrote`() = runTest {
+        val port = FakePort(emptyList()) { _, _ -> RestoreOutcome.Restored }.apply { exportOutcome = ExportOutcome.Exported(42) }
+        val c = HistoryController(port)
+
+        c.export("content://doc/1", ExportFormat.Csv)
+
+        assertEquals(listOf("content://doc/1" to ExportFormat.Csv), port.exports)
+        assertTrue("42" in c.state.value.message.orEmpty())
+    }
+
+    @Test
+    fun `a failed export never reads as success`() = runTest {
+        val port = FakePort(emptyList()) { _, _ -> RestoreOutcome.Restored }.apply { exportOutcome = ExportOutcome.Failed("disk full") }
+        val c = HistoryController(port)
+
+        c.export("content://doc/1", ExportFormat.Json)
+
+        val message = c.state.value.message.orEmpty()
+        assertTrue("disk full" in message && "failed" in message && "Exported" !in message, message)
     }
 
     @Test
