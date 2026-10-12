@@ -1,10 +1,13 @@
 package com.swipedelete.core.storage
 
 import com.swipedelete.core.model.BatchId
+import com.swipedelete.core.model.Capacity
 import com.swipedelete.core.model.JournalEntry
 import com.swipedelete.core.model.MediaItem
 import com.swipedelete.core.storage.quarantine.QuarantineStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * The Quarantine layer of the frozen decorator stack
@@ -43,4 +46,12 @@ class QuarantineStorageGateway(
     }
 
     override suspend fun restore(entry: JournalEntry): RestoreResult = store.restore(entry)
+
+    /**
+     * The volume figures from the concrete gateway, plus the bytes held in
+     * quarantine as `reclaimableBytes` (AC-9: held, not freed). `usedBytes`
+     * stays the OS-reported figure.
+     */
+    override suspend fun capacity(): Capacity =
+        delegate.capacity().copy(reclaimableBytes = withContext(Dispatchers.IO) { store.scan() }.sumOf { it.sidecar.sizeBytes })
 }

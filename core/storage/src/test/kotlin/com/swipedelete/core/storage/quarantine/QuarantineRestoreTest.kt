@@ -277,6 +277,19 @@ class QuarantineRestoreTest {
         assertEquals(entry.id, listed.single().entry.id)
     }
 
+    @Test
+    fun `capacity reports quarantined bytes as reclaimable and not as freed`() = runTest {
+        val h = newHarness()
+        assertEquals(0L, h.gateway.capacity().reclaimableBytes, "nothing quarantined yet")
+        h.quarantine(h.item("Memes/a.gif", ByteArray(100)))
+        h.quarantine(h.item("Memes/b.gif", ByteArray(250)))
+
+        val capacity = h.gateway.capacity()
+
+        assertEquals(350L, capacity.reclaimableBytes)
+        assertEquals(capacity.totalBytes - capacity.freeBytes, capacity.usedBytes)
+    }
+
     // --- Harness ---
 
     private inner class Harness(
