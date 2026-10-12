@@ -3,8 +3,14 @@ package com.swipedelete.app.di
 import android.content.Context
 import android.os.StatFs
 import com.swipedelete.core.common.UsableBytesSampler
+import com.swipedelete.core.storage.RestoreResult
+import com.swipedelete.core.storage.quarantine.HistoryStatus as CoreStatus
 import com.swipedelete.core.storage.quarantine.EmptyOutcome
 import com.swipedelete.core.storage.quarantine.QuarantineAdmin
+import com.swipedelete.feature.dashboard.history.HistoryPort
+import com.swipedelete.feature.dashboard.history.HistoryRow
+import com.swipedelete.feature.dashboard.history.HistoryRowStatus
+import com.swipedelete.feature.dashboard.history.RestoreOutcome
 import com.swipedelete.feature.dashboard.quarantine.HeldItem
 import com.swipedelete.feature.dashboard.quarantine.QuarantinePort
 import dagger.Module
@@ -40,6 +46,41 @@ object DashboardModule {
     }
 
     /** OS-reported usable bytes of the volume the quarantine lives on (AC-9). */
+    @Provides
+    @Singleton
+    fun provideHistoryPort(admin: QuarantineAdmin): HistoryPort = object : HistoryPort {
+        override suspend fun rows(): List<HistoryRow> = admin.history().map { item ->
+            HistoryRow(
+                id = item.row.id,
+                batchId = item.row.batchId,
+                path = item.row.fromUri,
+                sizeBytes = item.row.sizeBytes,
+                createdAt = item.row.createdAt,
+                status = when (item.status) {
+                    CoreStatus.Restorable -> HistoryRowStatus.Restorable
+                    CoreStatus.Restored -> HistoryRowStatus.Restored
+                    CoreStatus.NoLongerRestorable -> HistoryRowStatus.NoLongerRestorable
+                    CoreStatus.Other -> HistoryRowStatus.Other
+                },
+                kind = item.row.opKind.name.lowercase().replaceFirstChar { it.uppercase() }.replace("_", " "),
+            )
+        }
+
+        override suspend fun restore(rowId: String, keepBoth: Boolean): RestoreOutcome {
+            val item = admin.history().firstOrNull { it.row.id == rowId }
+                ?: return RestoreOutcome.Failed("the record no longer exists")
+            return when (val result = admin.restore(item, keepBoth)) {
+                is RestoreResult.Restored -> RestoreOutcome.Restored
+                is RestoreResult.HashMismatch -> RestoreOutcome.Failed("the copy no longer matches its checksum")
+                is RestoreResult.Conflict -> when (result.occupiedBy) {
+                    "source_not_granted" -> RestoreOutcome.Failed("the folder is no longer granted")
+                    "no_quarantine_copy" -> RestoreOutcome.Failed("the quarantine copy is gone")
+                    else -> RestoreOutcome.Conflict
+                }
+            }
+        }
+    }
+
     @Provides
     @Singleton
     fun provideUsableBytesSampler(@ApplicationContext context: Context): UsableBytesSampler {
