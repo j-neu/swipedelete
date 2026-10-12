@@ -186,7 +186,7 @@ class QuarantineStore(
      * only then is the original path checked for occupancy. A mismatch or a
      * conflict touches nothing.
      */
-    suspend fun restore(entry: JournalEntry): RestoreResult = withContext(Dispatchers.IO) {
+    suspend fun restore(entry: JournalEntry, keepBoth: Boolean = false): RestoreResult = withContext(Dispatchers.IO) {
         val quarantinedPath = entry.toUri
         val quarantined = quarantinedPath?.let(::File)
         if (quarantined == null || !quarantined.isFile) {
@@ -217,9 +217,12 @@ class QuarantineStore(
         if (targetPath.isNullOrBlank() || !File(targetPath).isAbsolute) {
             return@withContext restoreThroughGateway(sidecar, quarantined, sidecarFile)
         }
-        val target = File(targetPath)
+        var target = File(targetPath)
         if (target.exists()) {
-            return@withContext RestoreResult.Conflict(targetPath, target.absolutePath)
+            // "Keep both" lands beside the occupant under a free name; it never
+            // replaces the occupant (AC-17).
+            if (!keepBoth) return@withContext RestoreResult.Conflict(targetPath, target.absolutePath)
+            target = freeSibling(target)
         }
 
         // Crash-safe and race-free: write beside the target, then rename into
@@ -250,7 +253,7 @@ class QuarantineStore(
 
         quarantined.delete()
         sidecarFile.delete()
-        RestoreResult.Restored(targetPath)
+        RestoreResult.Restored(target.path)
     }
 
     /**
@@ -349,6 +352,20 @@ class QuarantineStore(
     }
 
     // --- Internals ---
+
+    /** `a.gif` → `a (restored).gif`, then `a (restored 2).gif`, … the first that is free. */
+    private fun freeSibling(target: File): File {
+        val dot = target.name.lastIndexOf('.').takeIf { it > 0 } ?: target.name.length
+        val stem = target.name.substring(0, dot)
+        val extension = target.name.substring(dot)
+        var n = 1
+        while (true) {
+            val label = if (n == 1) "restored" else "restored $n"
+            val candidate = File(target.parentFile, "$stem ($label)$extension")
+            if (!candidate.exists()) return candidate
+            n++
+        }
+    }
 
     /**
      * Streams the source into [destination] in [CHUNK_SIZE] chunks, hashing the
