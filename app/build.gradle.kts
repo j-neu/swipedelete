@@ -75,6 +75,7 @@ dependencies {
     // M1-T14: the deck destination hosts the deck surface (card + accessible
     // action bar) and the viewer/{itemId} destination opens the real viewer.
     implementation(project(":feature:deck"))
+    implementation(project(":feature:dashboard"))
     implementation(project(":feature:viewer"))
 
     implementation(platform(libs.androidx.compose.bom))
